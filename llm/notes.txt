@@ -1,0 +1,36 @@
+
+
+smollm2-135M-Instruct: sm (0.27GB)  
+smollm2-360M-Instruct: md (0.72GB)
+smollm2-1.7B-Instruct: lg (3.42GB)
+
+
+------------------------------------------------------
+model.embed_tokens.weight   [49152, 576]
+
+model.layers.0.input_layernorm.weight   [576]
+model.layers.0.mlp.down_proj.weight [576, 1536] 
+model.layers.0.mlp.gate_proj.weight [1536, 576] 
+model.layers.0.mlp.up_proj.weight   [1536, 576] 
+model.layers.0.post_attention_layernorm.weight  [576]
+model.layers.0.self_attn.k_proj.weight  [192, 576]
+model.layers.0.self_attn.o_proj.weight  [576, 576]
+model.layers.0.self_attn.q_proj.weight  [576, 576]  
+model.layers.0.self_attn.v_proj.weight  [192, 576]
+
+model.norm.weight   [576]
+-----------------------------------------------------
+
+
+CHAT TEMPLATE:
+<|im_start|>system\nSYSTEM_MESSAGE<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+DEFAULT CHAT TEMPLATE
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+TOKENS
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
+[1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198]
+
+<|im_end|>\n
+[2, 198]
