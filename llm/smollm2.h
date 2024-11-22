@@ -20,6 +20,11 @@
     }
 
 
+/*
+smollm2-135M-Instruct: sm (0.27GB)  
+smollm2-360M-Instruct: md (0.72GB)
+smollm2-1.7B-Instruct: lg (3.42GB)
+*/
 enum class ModelType {
     Small,
     Medium,
@@ -376,12 +381,26 @@ float* forward(SmolLM2& t, const int* tokens, int n_ctx, int start_pos)
 }
 
 
+/*
+CHAT TEMPLATE:
+<|im_start|>system\nSYSTEM_MESSAGE<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+DEFAULT CHAT TEMPLATE
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+TOKENS
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
+[1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198]
+
+<|im_end|>\n
+[2, 198]
+*/
+
 class SmolLMTokenizer {
 public:
     const int eot_id = 2;
 
 public:
-
 SmolLMTokenizer(const std::string& vocab_path, int n_vocab)
     : m_n_vocab{n_vocab}
 {

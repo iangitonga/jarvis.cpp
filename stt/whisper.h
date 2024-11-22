@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <vector>
+#include <unordered_map>
 
 #include "ops.h"
 
@@ -622,7 +623,53 @@ void load_whisper(const char* fpath, Whisper& m, const Config& c)
 }
 
 
+class WhisperTokenizer {
+public:
+    int sot{50257};
+    int eot{50256};
+    int transcribe{50358};
+    int translate{50357};
+    int no_speech{50361};
+    int no_timestamps{50362};
+    int timestamp_begin{50363};
+    int timestamp_end{51863};
+    int english_token{50258};
 
+    WhisperTokenizer() {
+        std::ifstream fin{m_vocab_path, std::ios_base::binary};
+        if(!fin.is_open()) {
+            std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path.c_str());
+            std::exit(EXIT_FAILURE);
+        };
+
+        std::string word;
+        for (int i = 0; i < m_n_vocab; i++) {
+            int32_t len;
+            fin.read((char *) &len, sizeof(len));
+
+            word.resize(len);
+            fin.read((char *) word.data(), len);
+
+            m_token_to_str[i] = word;
+        }     
+    }
+    
+    const std::string& decode_token(int token) {
+        if (token < m_n_vocab) {
+            return m_token_to_str[token];
+        }
+        else {
+            // std::cerr << "Unknown token: " << token << "\n";
+            return m_special_token;
+        }
+    }
+
+private:
+    std::string m_vocab_path{"assets/whisper_vocab.bin"};
+    int m_n_vocab{50256};
+    std::unordered_map<int, std::string> m_token_to_str;
+    const std::string m_special_token = "<special_token>";
+};
 
 // int main(int argc, char const *argv[])
 // {

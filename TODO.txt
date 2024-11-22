@@ -1,3 +1,11 @@
-cvt tokenizer to bin.
+Add support for all Whisper models.
+Add single-malloc in whisper.
+Add better Audio decoding.
+Add stt-only and llm-only models (separate).
+Add output coloring.
 
-More to come.
+Add tts-model.
+
+Add GPU support.
+
+Add automatic voice detection activity (VAD)

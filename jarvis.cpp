@@ -5,7 +5,6 @@
 
 #include "audio.h"
 #include "stt/whisper.h"
-#include "stt/tokenizer.h"
 #include "llm/smollm2.h"
 
 
@@ -81,7 +80,7 @@ int main(int argc, char const *argv[])
     AudioStream stream;
     AudioPreprocessor apreproc;
 
-    Tokenizer whisper_tokenizer;
+    WhisperTokenizer whisper_tokenizer;
     const Config stt_config{};
     Whisper whisper{};
     alloc_whisper(whisper, stt_config);
@@ -149,8 +148,9 @@ int main(int argc, char const *argv[])
         printf("PROMPT: %s\n", prompt.c_str());
 
         // PROMPT Answering.
-        printf("\n\n[LLM]: \n"); fflush(stdout);
+        printf("\n\n[LLM]: \n\n"); fflush(stdout);
         topk_sample(smollm2, smollm2_tokenizer, prompt);
+        printf("\n\n");
     }
 
     free_whisper(whisper, stt_config);
