@@ -1,5 +1,6 @@
 import argparse
 import os
+import urllib
 
 import torch
 from safetensors import safe_open
@@ -24,7 +25,7 @@ MODELS_INFO = {
 
 def _download_model(url, model_path):
     print(f"Downloading {model_path}")
-    with request.urlopen(url) as source, open(model_path, "wb") as output:
+    with urllib.request.urlopen(url) as source, open(model_path, "wb") as output:
         download_size = int(source.info().get("Content-Length"))
         download_size_mb = int(download_size / 1000_000)
         downloaded = 0
@@ -53,7 +54,7 @@ def write_tensor(name, checkpoint, fout):
 def convert_smollm2(model_name, in_model_path):
     print(f"Converting {model_name} to dtype: Float16")
 
-    if not os.path.isfile(in_model_path):
+    if not in_model_path or not os.path.isfile(in_model_path):
         in_model_path = f"{model_name}.safetensors"
         _download_model(MODELS_INFO[model_name]["url"], in_model_path)
 

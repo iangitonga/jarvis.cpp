@@ -1,0 +1,90 @@
+input audio: n samples, sr=16000, dtype=signed_16_bit_littleendian
+
+Whisper:
+ input: n_mels, 3000=nframes
+
+x = gelu(conv1D(x)): n_mels, 3000
+x = gelu(conv1D(x)): n_mels, 1500 [stride=2]
+x += positional_embedding(x)
+
+for block in blocks:
+    x = block(x)
+
+x = layernorm(x)
+
+block: 
+    x = x + attn(ln(x))
+    x = x + mlp(ln(x))
+    
+mlp:
+
+
+
+encoder.positional_embedding
+encoder.conv1.weight
+encoder.conv1.bias
+encoder.conv2.weight
+encoder.conv2.bias
+
+encoder.blocks.0.mlp_ln.weight
+encoder.blocks.0.mlp_ln.bias
+encoder.blocks.0.mlp.0.weight
+encoder.blocks.0.mlp.0.bias
+encoder.blocks.0.mlp.2.weight
+encoder.blocks.0.mlp.2.bias
+encoder.blocks.0.attn_ln.weight
+encoder.blocks.0.attn_ln.bias
+encoder.blocks.0.attn.query.weight
+encoder.blocks.0.attn.query.bias
+encoder.blocks.0.attn.key.weight
+encoder.blocks.0.attn.value.weight
+encoder.blocks.0.attn.value.bias
+encoder.blocks.0.attn.out.weight
+encoder.blocks.0.attn.out.bias
+
+encoder.ln_post.weight
+encoder.ln_post.bias
+
+
+decoder.positional_embedding
+decoder.token_embedding.weight
+
+decoder.blocks.0.mlp_ln.weight
+decoder.blocks.0.mlp_ln.bias
+decoder.blocks.0.mlp.0.weight
+decoder.blocks.0.mlp.0.bias
+decoder.blocks.0.mlp.2.weight
+decoder.blocks.0.mlp.2.bias
+decoder.blocks.0.attn_ln.weight
+decoder.blocks.0.attn_ln.bias
+decoder.blocks.0.attn.query.weight
+decoder.blocks.0.attn.query.bias
+decoder.blocks.0.attn.key.weight
+decoder.blocks.0.attn.value.weight
+decoder.blocks.0.attn.value.bias
+decoder.blocks.0.attn.out.weight
+decoder.blocks.0.attn.out.bias
+decoder.blocks.0.cross_attn_ln.weight
+decoder.blocks.0.cross_attn_ln.bias
+decoder.blocks.0.cross_attn.query.weight
+decoder.blocks.0.cross_attn.query.bias
+decoder.blocks.0.cross_attn.key.weight
+decoder.blocks.0.cross_attn.value.weight
+decoder.blocks.0.cross_attn.value.bias
+decoder.blocks.0.cross_attn.out.weight
+decoder.blocks.0.cross_attn.out.bias
+
+decoder.ln.weight
+decoder.ln.bias
+
+
+{'n_mels': 80,
+ 'n_vocab': 51864,
+ 'n_audio_ctx': 1500,
+ 'n_audio_state': 384,
+ 'n_audio_head': 6,
+ 'n_audio_layer': 4,
+ 'n_text_ctx': 448,
+ 'n_text_state': 384,
+ 'n_text_head': 6,
+ 'n_text_layer': 4}

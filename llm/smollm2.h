@@ -227,13 +227,13 @@ void alloc_smollm2(SmolLM2& t)
     alloc_smollm2_acvs(acvs_ptr, t);
 }
 
-void uninit_smollm2(SmolLM2& t)
+void free_smollm2(SmolLM2& t)
 {
     std::free(t.w.emb_table);
 }
 
 
-void init_smollm2(SmolLM2& t, int max_ctx, ModelType model_type)
+void alloc_smollm2(SmolLM2& t, int max_ctx, ModelType model_type)
 {
     switch (model_type) {
         case ModelType::Small: {
@@ -307,7 +307,12 @@ void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
 
     const size_t weights_nbytes = get_smollm2_weights_nbytes(t);
 
-    LLAMA32_ASSERT(fread(t.w.emb_table, weights_nbytes, 1, fin) == 1);
+    const size_t read_result = fread(t.w.emb_table, weights_nbytes, 1, fin);
+    if (read_result != 1) {
+        fprintf(stderr, "error: File '%s' incomplete\n", ckpt_path);
+        fclose(fin);
+        exit(-1);
+    }
 
     fclose(fin);
 }
@@ -341,13 +346,13 @@ float* forward(SmolLM2& t, const int* tokens, int n_ctx, int start_pos)
         ops::rotary_emb(al[i].q_proj_acv, n_ctx, c.n_heads, c.d_head, c.rope_theta, start_pos);
         ops::rotary_emb(al[i].k_proj_acv, n_ctx, c.n_kv_heads, c.d_head, c.rope_theta, start_pos);
 
-        ops::qk(al[i].q_proj_acv, al[i].k_proj_acv, al[i].qk_acv, n_ctx, c.n_heads, c.n_kv_heads, c.d_head, start_pos);
+        ops::qk(al[i].q_proj_acv, al[i].k_proj_acv, al[i].qk_acv, n_ctx, n_ctx, c.n_heads, c.n_kv_heads, c.d_head, start_pos);
         ops::attn_mask_inplace(al[i].qk_acv, c.n_heads, n_ctx, start_pos);
-        ops::softmax_inplace(al[i].qk_acv, c.n_heads, n_ctx, start_pos);
-        ops::qkv(al[i].qk_acv, al[i].v_proj_acv, al[i].qkv_acv, n_ctx, c.n_heads, c.n_kv_heads, c.d_head, start_pos);
+        ops::softmax_inplace(al[i].qk_acv, c.n_heads, n_ctx, n_ctx, start_pos);
+        ops::qkv(al[i].qk_acv, al[i].v_proj_acv, al[i].qkv_acv, n_ctx, n_ctx, c.n_heads, c.n_kv_heads, c.d_head, start_pos);
         ops::matmul_2d(al[i].qkv_acv, wl[i].o_proj, al[i].o_proj_acv, n_ctx, c.d_embd, c.d_embd, start_pos);
 
-        ops::residual(al[i].o_proj_acv, al[i].res_0_acv, al[i].res_1_acv, n_ctx, c.d_embd, start_pos);
+        ops::add(al[i].o_proj_acv, al[i].res_0_acv, al[i].res_1_acv, n_ctx, c.d_embd, start_pos);
 
         // MLP:: down(silu(gate(x)) * up(x))
         ops::rms_norm(al[i].res_1_acv, wl[i].mlp_norm, al[i].mlp_norm_acv, n_ctx, c.d_embd, c.rms_eps, start_pos);
@@ -358,7 +363,7 @@ float* forward(SmolLM2& t, const int* tokens, int n_ctx, int start_pos)
         ops::mul_inplace(al[i].mlp_gate_acv, al[i].mlp_up_acv, n_ctx, c.d_mlp, start_pos);
         ops::matmul_2d(al[i].mlp_gate_acv, wl[i].down_proj, al[i].mlp_down_acv, n_ctx, c.d_mlp, c.d_embd, start_pos);
 
-        ops::residual(al[i].res_1_acv, al[i].mlp_down_acv, al[i].res_1_acv, n_ctx, c.d_embd, start_pos);
+        ops::add(al[i].res_1_acv, al[i].mlp_down_acv, al[i].res_1_acv, n_ctx, c.d_embd, start_pos);
 
         next_layer_inp = t.a.layers[i].res_1_acv;
     }
@@ -478,7 +483,7 @@ private:
 };
 
 
-int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& prompt, int top_k, float top_p, float temp)
+int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& prompt, int top_k=40, float top_p=0.95f, float temp=0.8f)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -560,120 +565,120 @@ int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& promp
 }
 
 
-static const char *usage_message = R"(
-USAGE:
-./llama32 [options] -p PROMPT  for a single prompt or
-./llama32 [options] for a chat interface. 
+// static const char *usage_message = R"(
+// USAGE:
+// ./llama32 [options] -p PROMPT  for a single prompt or
+// ./llama32 [options] for a chat interface. 
 
-Optional args. 
--f16 :     Use float-16 model (2.3GB). [default]
---npred  N : Max context size. Minimum is 128 and max is 8192 [default=512]. Higher values consume more memory.
-)";
+// Optional args. 
+// -f16 :     Use float-16 model (2.3GB). [default]
+// --npred  N : Max context size. Minimum is 128 and max is 8192 [default=512]. Higher values consume more memory.
+// )";
 
 
-int main(int argc, char const *argv[])
-{
-    Timer timer{&globals::metrics.total_runtime_ms};
+// int main(int argc, char const *argv[])
+// {
+//     Timer timer{&globals::metrics.total_runtime_ms};
 
-    const char* model_path = "models/smollm2-sm.bin";
-    const ModelType model_type = ModelType::Small;
-    int max_ctx = 512;
-    std::string prompt = "";
+//     const char* model_path = "models/smollm2-sm.bin";
+//     const ModelType model_type = ModelType::Small;
+//     int max_ctx = 512;
+//     std::string prompt = "";
 
-    for (int i = 1; i < argc; i++) {
-        std::string_view arg{argv[i]};
-        if (arg == "--help" || arg == "-h") {
-            fprintf(stderr, "%s\n.", usage_message);
-            return 0;
-        }
-        else if (arg == "-f16") {
-            continue;
-        }
-        else if (arg == "-p") {
-            if (i + 1 < argc) {
-                prompt = argv[i + 1];
-                i += 1; // fast-forward
-            } else {
-                fprintf(stderr, "error: Prompt not provided.\n");
-                fprintf(stderr, "%s\n.", usage_message);
-                return -1;
-            }
-        }
-        else if (arg == "--npred") {
-            if (argc <= i+1) {
-                fprintf(stderr, "npred value is missing.\n");
-                return -1;
-            }
-            int npred;
-            try {
-                npred = std::stoi(argv[i+1]);
-            } catch (...) {
-                fprintf(stderr, "Invalid npred value.\n");
-                return -1;
-            }
-            if (npred < 128 || npred > 8192) {
-                fprintf(stderr, "npred must be greater than 128 and less than 2048.\n");
-                return -1;
-            }
-            max_ctx = npred;
-            i += 1; // skip len param
-        }
-        else {
-            fprintf(stderr, "error: Unknown argument: %s\n", arg.data());
-            fprintf(stderr, "%s\n.", usage_message);
-            return -1;
-        }
-    }
-
-// #ifdef _WIN32
-//     int res = std::system("python model_dl.py");
-// #else
-//     int res = std::system("python3 model_dl.py");
-// #endif
-//     if (res != 0) {
-//         fprintf(stderr, "Error: Failed to download the model. Check your network connectivity.\n");
-//         return -1;
+//     for (int i = 1; i < argc; i++) {
+//         std::string_view arg{argv[i]};
+//         if (arg == "--help" || arg == "-h") {
+//             fprintf(stderr, "%s\n.", usage_message);
+//             return 0;
+//         }
+//         else if (arg == "-f16") {
+//             continue;
+//         }
+//         else if (arg == "-p") {
+//             if (i + 1 < argc) {
+//                 prompt = argv[i + 1];
+//                 i += 1; // fast-forward
+//             } else {
+//                 fprintf(stderr, "error: Prompt not provided.\n");
+//                 fprintf(stderr, "%s\n.", usage_message);
+//                 return -1;
+//             }
+//         }
+//         else if (arg == "--npred") {
+//             if (argc <= i+1) {
+//                 fprintf(stderr, "npred value is missing.\n");
+//                 return -1;
+//             }
+//             int npred;
+//             try {
+//                 npred = std::stoi(argv[i+1]);
+//             } catch (...) {
+//                 fprintf(stderr, "Invalid npred value.\n");
+//                 return -1;
+//             }
+//             if (npred < 128 || npred > 8192) {
+//                 fprintf(stderr, "npred must be greater than 128 and less than 2048.\n");
+//                 return -1;
+//             }
+//             max_ctx = npred;
+//             i += 1; // skip len param
+//         }
+//         else {
+//             fprintf(stderr, "error: Unknown argument: %s\n", arg.data());
+//             fprintf(stderr, "%s\n.", usage_message);
+//             return -1;
+//         }
 //     }
 
-    SmolLM2 model;
-    init_smollm2(model, max_ctx, model_type);
-    load_smollm2_checkpoint(model, model_path);
+// // #ifdef _WIN32
+// //     int res = std::system("python model_dl.py");
+// // #else
+// //     int res = std::system("python3 model_dl.py");
+// // #endif
+// //     if (res != 0) {
+// //         fprintf(stderr, "Error: Failed to download the model. Check your network connectivity.\n");
+// //         return -1;
+// //     }
 
-    // size of the vocab without special tokens eg <|start_of_text|>.
-    const int vocab_tok_size = model.config.n_vocab;
-    SmolLMTokenizer tokenizer{"tokenizer.bin", vocab_tok_size};
+//     SmolLM2 model;
+//     init_smollm2(model, max_ctx, model_type);
+//     load_smollm2_checkpoint(model, model_path);
 
-    const int top_k = 40;
-    const float top_p = 0.95;
-    const float temp = 0.8;
+//     // size of the vocab without special tokens eg <|start_of_text|>.
+//     const int vocab_tok_size = model.config.n_vocab;
+//     SmolLMTokenizer tokenizer{"smollm2_tokenizer.bin", vocab_tok_size};
 
-    if (prompt == "") {
-        printf("Chat interface. Write your prompt and press enter to submit. Enter q or press ctrl+c to quit.\n");
-        std::string prompt;
-        while (true) {
-            printf("\n\n[You]: "); fflush(stdout);
+//     const int top_k = 40;
+//     const float top_p = 0.95;
+//     const float temp = 0.8;
 
-            std::getline(std::cin, prompt);
-            if (prompt == "q")
-                break;
+//     if (prompt == "") {
+//         printf("Chat interface. Write your prompt and press enter to submit. Enter q or press ctrl+c to quit.\n");
+//         std::string prompt;
+//         while (true) {
+//             printf("\n\n[You]: "); fflush(stdout);
 
-            printf("\n\n[SmolLM2]: \n"); fflush(stdout);
+//             std::getline(std::cin, prompt);
+//             if (prompt == "q")
+//                 break;
+
+//             printf("\n\n[SmolLM2]: \n"); fflush(stdout);
             
-            topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
-        } 
-    } else {
-        printf("\n[PROMPT]:\n%s\n\n[SmolLM2]: ", prompt.c_str());
-        std::fflush(stdout);
+//             topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
+//         } 
+//     } else {
+//         printf("\n[PROMPT]:\n%s\n\n[SmolLM2]: ", prompt.c_str());
+//         std::fflush(stdout);
 
-        const int processed_toks = topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
-        timer.stop();
-        print_metrics(globals::metrics, processed_toks);
-    }
+//         const int processed_toks = topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
+//         timer.stop();
+//         print_metrics(globals::metrics, processed_toks);
+//     }
 
-    uninit_smollm2(model);
+//     uninit_smollm2(model);
 
-    return 0;
-}
+//     return 0;
+// }
 
 
 /*

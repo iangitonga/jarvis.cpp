@@ -1,0 +1,3 @@
+cvt tokenizer to bin.
+
+More to come.
