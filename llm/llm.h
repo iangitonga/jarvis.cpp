@@ -13,14 +13,129 @@
 #include "utils.h"
 
 
-#define LLAMA32_ASSERT(condition)  \
-    if (!(condition)) { \
-        std::fprintf(stderr, "\nLLAMA32_ASSERT: %s:%d: %s.\n", __FILE__, __LINE__, #condition); \
-        std::exit(EXIT_FAILURE); \
-    }
-
 
 namespace llm {
+
+/*
+CHAT TEMPLATE:
+<|im_start|>system\nSYSTEM_MESSAGE<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+DEFAULT CHAT TEMPLATE
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
+
+TOKENS
+<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
+[1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198]
+
+<|im_end|>\n
+[2, 198]
+*/
+
+class SmolLMTokenizer {
+public:
+    const int eot_id = 2;
+
+public:
+SmolLMTokenizer()
+{
+    std::ifstream fin{m_vocab_path, std::ios_base::binary};
+    if(!fin.is_open()) {
+        std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path);
+        std::exit(EXIT_FAILURE);
+    };
+
+    std::string word;
+    for (int i = 0; i < m_n_vocab; i++)
+    {
+        int32_t len;
+        fin.read((char *) &len, sizeof(len));
+
+        word.resize(len);
+        fin.read((char *) word.data(), len);
+
+        token_to_id_[word] = i;
+        id_to_token_[i] = word;
+    }
+}
+
+// Convert a single token id into text.
+const char* decode(int32_t token_id) {
+    return id_to_token_[token_id].c_str();
+}
+
+// Convert a string of arbitrary text to a sequence of tokens ids.
+std::vector<int32_t> encode(const std::string& text) {
+    std::vector<std::string> words;
+
+    // first split the text into words
+    std::string str = text;
+    std::regex re(m_pat);
+    std::smatch m;
+
+    while (std::regex_search(str, m, re)) {
+        for (auto x : m) {
+            words.push_back(x);
+        }
+        str = m.suffix();
+    }
+
+    // find the longest tokens that form the words:
+    std::vector<int32_t> tokens;
+    tokens.reserve(encode_prefix.size() + words.size() + encode_suffix.size());
+    // prepend prefix.
+    tokens.insert(tokens.end(), encode_prefix.begin(), encode_prefix.end());
+
+    for (const auto & word : words)
+    {
+        if (word.size() == 0) continue;
+
+        int i = 0;
+        int n = word.size();
+        while (i < n) {
+            int j = n;
+            while (j > i)
+            {
+                auto it = token_to_id_.find(word.substr(i, j-i));
+                if (it != token_to_id_.end()) {
+                    tokens.push_back(it->second);
+                    i = j;
+                    break;
+                }
+                --j;
+            }
+            if (i == n)
+                break;
+            if (j == i)
+            {
+                auto sub = word.substr(i, 1);
+                if (token_to_id_.find(sub) != token_to_id_.end())
+                    tokens.push_back(token_to_id_.at(sub));
+                else
+                    fprintf(stderr, "%s: unknown token '%s'\n", __func__, sub.data());
+                ++i;
+            }
+        }
+    }
+
+    // append suffix.
+    tokens.reserve(tokens.size() + encode_suffix.size());
+    tokens.insert(tokens.end(), encode_suffix.begin(), encode_suffix.end());
+
+    return tokens;
+}
+
+private:
+    const std::string m_pat = R"('s|'t|'re|'ve|'m|'ll|'d| ?[[:alpha:]]+| ?[[:digit:]]+| ?[^\s[:alpha:][:digit:]]+|\s+(?!\S)|\s+)";
+    // Prefix: <|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
+    const std::vector<int> encode_prefix = {1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198};
+    // Suffix: <|im_end|>\n<|im_start|>assistant\n
+    const std::vector<int> encode_suffix = {2, 198, 1, 520, 9531, 198};
+    std::map<std::string, int32_t> token_to_id_;
+    std::map<int32_t, std::string> id_to_token_;
+    // size of the vocab without special tokens eg <|start_of_text|>.
+    int m_n_vocab = 49152;
+    const char* m_vocab_path = "assets/smollm2_tokenizer.bin";
+};
 
 /*
 smollm2-135M-Instruct: sm (0.27GB)  
@@ -144,6 +259,7 @@ struct SmolLM2Acvs
 
 struct SmolLM2
 {
+    SmolLMTokenizer tokenizer;
     int max_ctx;
     SmolLM2Config config;
     SmolLM2Weights w;
@@ -309,7 +425,7 @@ void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
 
     const int64_t true_magic_no = 0x66326d6c6c6f6d73; // Hex for ASCII string: smollm2f
     int64_t magic_no;
-    LLAMA32_ASSERT(fread(&magic_no, sizeof(int64_t), 1, fin) == 1);
+    JARVIS_ASSERT(fread(&magic_no, sizeof(int64_t), 1, fin) == 1);
 
     if (magic_no != true_magic_no) {
         fprintf(stderr, "Magic number: %ld failed to match the expected one: %ld.\n", magic_no, true_magic_no);
@@ -329,12 +445,12 @@ void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
     fclose(fin);
 }
 
-void smollm2_init(SmolLM2& model, SmolLM2Type type, int max_ctx, const char* path)
+void smollm2_init(SmolLM2& model, SmolLM2Type type, int max_ctx, const std::string& path)
 {
     model.config = get_smollm2_config(type);
     model.max_ctx = max_ctx;
     smollm2_alloc(model);
-    load_smollm2_checkpoint(model, path);
+    load_smollm2_checkpoint(model, path.c_str());
 }
 
 void smollm2_uninit(SmolLM2& model)
@@ -401,148 +517,26 @@ float* forward(SmolLM2& t, const int* tokens, int n_ctx, int start_pos)
 }
 
 
-/*
-CHAT TEMPLATE:
-<|im_start|>system\nSYSTEM_MESSAGE<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
-
-DEFAULT CHAT TEMPLATE
-<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nUSER_MESSAGE<|im_end|>\n
-
-TOKENS
-<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
-[1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198]
-
-<|im_end|>\n
-[2, 198]
-*/
-
-class SmolLMTokenizer {
-public:
-    const int eot_id = 2;
-
-public:
-SmolLMTokenizer()
-{
-    std::ifstream fin{m_vocab_path, std::ios_base::binary};
-    if(!fin.is_open()) {
-        std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path);
-        std::exit(EXIT_FAILURE);
-    };
-
-    std::string word;
-    for (int i = 0; i < m_n_vocab; i++)
-    {
-        int32_t len;
-        fin.read((char *) &len, sizeof(len));
-
-        word.resize(len);
-        fin.read((char *) word.data(), len);
-
-        token_to_id_[word] = i;
-        id_to_token_[i] = word;
-    }
-}
-
-// Convert a single token id into text.
-const char* decode(int32_t token_id) {
-    return id_to_token_[token_id].c_str();
-}
-
-// Convert a string of arbitrary text to a sequence of tokens ids.
-std::vector<int32_t> encode(const std::string& text) {
-    std::vector<std::string> words;
-
-    // first split the text into words
-    std::string str = text;
-    std::regex re(m_pat);
-    std::smatch m;
-
-    while (std::regex_search(str, m, re)) {
-        for (auto x : m) {
-            words.push_back(x);
-        }
-        str = m.suffix();
-    }
-
-    // find the longest tokens that form the words:
-    std::vector<int32_t> tokens;
-    tokens.reserve(encode_prefix.size() + words.size() + encode_suffix.size());
-    // prepend prefix.
-    tokens.insert(tokens.end(), encode_prefix.begin(), encode_prefix.end());
-
-    for (const auto & word : words)
-    {
-        if (word.size() == 0) continue;
-
-        int i = 0;
-        int n = word.size();
-        while (i < n) {
-            int j = n;
-            while (j > i)
-            {
-                auto it = token_to_id_.find(word.substr(i, j-i));
-                if (it != token_to_id_.end()) {
-                    tokens.push_back(it->second);
-                    i = j;
-                    break;
-                }
-                --j;
-            }
-            if (i == n)
-                break;
-            if (j == i)
-            {
-                auto sub = word.substr(i, 1);
-                if (token_to_id_.find(sub) != token_to_id_.end())
-                    tokens.push_back(token_to_id_.at(sub));
-                else
-                    fprintf(stderr, "%s: unknown token '%s'\n", __func__, sub.data());
-                ++i;
-            }
-        }
-    }
-
-    // append suffix.
-    tokens.reserve(tokens.size() + encode_suffix.size());
-    tokens.insert(tokens.end(), encode_suffix.begin(), encode_suffix.end());
-
-    return tokens;
-}
-
-private:
-    const std::string m_pat = R"('s|'t|'re|'ve|'m|'ll|'d| ?[[:alpha:]]+| ?[[:digit:]]+| ?[^\s[:alpha:][:digit:]]+|\s+(?!\S)|\s+)";
-    // Prefix: <|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\n
-    const std::vector<int> encode_prefix = {1, 9690, 198, 2683, 359, 253, 5356, 5646, 11173, 3365, 3511, 308, 34519, 28, 7018, 411, 407, 19712, 8182, 2, 198, 1, 4093, 198};
-    // Suffix: <|im_end|>\n<|im_start|>assistant\n
-    const std::vector<int> encode_suffix = {2, 198, 1, 520, 9531, 198};
-    std::map<std::string, int32_t> token_to_id_;
-    std::map<int32_t, std::string> id_to_token_;
-    // size of the vocab without special tokens eg <|start_of_text|>.
-    int m_n_vocab = 49152;
-    const char* m_vocab_path = "assets/smollm2_tokenizer.bin";
-};
-
-
-int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& prompt, int top_k=40, float top_p=0.95f, float temp=0.8f)
+int topk_sample(SmolLM2& model, const std::string& prompt, int top_k=40, float top_p=0.95f, float temp=0.8f)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::vector<int> tokens = tokenizer.encode(prompt);
-    if ((int)tokens.size() >= t.max_ctx) {
-        std::fprintf(stderr, "Prompt is too large: %d for max context size: %d\n", (int)tokens.size(), t.max_ctx);
+    std::vector<int> tokens = model.tokenizer.encode(prompt);
+    if ((int)tokens.size() >= model.max_ctx) {
+        std::fprintf(stderr, "Prompt is too large: %d for max context size: %d\n", (int)tokens.size(), model.max_ctx);
         return 0;
     }
 
-    const int logits_size = t.config.n_vocab;
+    const int logits_size = model.config.n_vocab;
     std::vector<std::pair<double, int>> logits_probs;
     logits_probs.reserve(logits_size);
 
-    const int n_pred_tokens = t.max_ctx - tokens.size();
+    const int n_pred_tokens = model.max_ctx - tokens.size();
     for (int i = 0; i < n_pred_tokens; i++) {
         const int start_pos = i == 0 ? 0 : tokens.size()-1;
 
-        const float* logits = forward(t, tokens.data(), tokens.size(), start_pos);
+        const float* logits = forward(model, tokens.data(), tokens.size(), start_pos);
 
         Timer sample_timer{&globals::metrics.sample_time_ms};
 
@@ -590,11 +584,11 @@ int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& promp
 
         std::discrete_distribution dist(probs.begin(), probs.end());
         const int pred_token = dist(gen);
-        if (pred_token == tokenizer.eot_id) {
+        if (pred_token == model.tokenizer.eot_id) {
             break;
         }
 
-        std::printf("%s", tokenizer.decode(pred_token));
+        std::printf("%s", model.tokenizer.decode(pred_token));
         std::fflush(stdout);
 
         tokens.push_back(pred_token);
@@ -605,127 +599,3 @@ int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& promp
 }
 
 } // namespace llm
-
-// static const char *usage_message = R"(
-// USAGE:
-// ./llama32 [options] -p PROMPT  for a single prompt or
-// ./llama32 [options] for a chat interface. 
-
-// Optional args. 
-// -f16 :     Use float-16 model (2.3GB). [default]
-// --npred  N : Max context size. Minimum is 128 and max is 8192 [default=512]. Higher values consume more memory.
-// )";
-
-
-// int main(int argc, char const *argv[])
-// {
-//     Timer timer{&globals::metrics.total_runtime_ms};
-
-//     const char* model_path = "models/smollm2-sm.bin";
-//     const ModelType model_type = ModelType::Small;
-//     int max_ctx = 512;
-//     std::string prompt = "";
-
-//     for (int i = 1; i < argc; i++) {
-//         std::string_view arg{argv[i]};
-//         if (arg == "--help" || arg == "-h") {
-//             fprintf(stderr, "%s\n.", usage_message);
-//             return 0;
-//         }
-//         else if (arg == "-f16") {
-//             continue;
-//         }
-//         else if (arg == "-p") {
-//             if (i + 1 < argc) {
-//                 prompt = argv[i + 1];
-//                 i += 1; // fast-forward
-//             } else {
-//                 fprintf(stderr, "error: Prompt not provided.\n");
-//                 fprintf(stderr, "%s\n.", usage_message);
-//                 return -1;
-//             }
-//         }
-//         else if (arg == "--npred") {
-//             if (argc <= i+1) {
-//                 fprintf(stderr, "npred value is missing.\n");
-//                 return -1;
-//             }
-//             int npred;
-//             try {
-//                 npred = std::stoi(argv[i+1]);
-//             } catch (...) {
-//                 fprintf(stderr, "Invalid npred value.\n");
-//                 return -1;
-//             }
-//             if (npred < 128 || npred > 8192) {
-//                 fprintf(stderr, "npred must be greater than 128 and less than 2048.\n");
-//                 return -1;
-//             }
-//             max_ctx = npred;
-//             i += 1; // skip len param
-//         }
-//         else {
-//             fprintf(stderr, "error: Unknown argument: %s\n", arg.data());
-//             fprintf(stderr, "%s\n.", usage_message);
-//             return -1;
-//         }
-//     }
-
-// // #ifdef _WIN32
-// //     int res = std::system("python model_dl.py");
-// // #else
-// //     int res = std::system("python3 model_dl.py");
-// // #endif
-// //     if (res != 0) {
-// //         fprintf(stderr, "Error: Failed to download the model. Check your network connectivity.\n");
-// //         return -1;
-// //     }
-
-//     SmolLM2 model;
-//     init_smollm2(model, max_ctx, model_type);
-//     load_smollm2_checkpoint(model, model_path);
-
-//     // size of the vocab without special tokens eg <|start_of_text|>.
-//     const int vocab_tok_size = model.config.n_vocab;
-//     SmolLMTokenizer tokenizer{"smollm2_tokenizer.bin", vocab_tok_size};
-
-//     const int top_k = 40;
-//     const float top_p = 0.95;
-//     const float temp = 0.8;
-
-//     if (prompt == "") {
-//         printf("Chat interface. Write your prompt and press enter to submit. Enter q or press ctrl+c to quit.\n");
-//         std::string prompt;
-//         while (true) {
-//             printf("\n\n[You]: "); fflush(stdout);
-
-//             std::getline(std::cin, prompt);
-//             if (prompt == "q")
-//                 break;
-
-//             printf("\n\n[SmolLM2]: \n"); fflush(stdout);
-            
-//             topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
-//         } 
-//     } else {
-//         printf("\n[PROMPT]:\n%s\n\n[SmolLM2]: ", prompt.c_str());
-//         std::fflush(stdout);
-
-//         const int processed_toks = topk_sample(model, tokenizer, prompt, top_k, top_p, temp);
-//         timer.stop();
-//         print_metrics(globals::metrics, processed_toks);
-//     }
-
-//     uninit_smollm2(model);
-
-//     return 0;
-// }
-
-
-/*
-
-audio = get_audio()
-prompt = speech_to_text(audio);
-output = llm_stream_answer(speech)
-
-*/

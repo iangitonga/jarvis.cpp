@@ -5,8 +5,8 @@
 #include <memory>
 
 #include "audio.h"
-#include "stt/whisper.h"
-#include "llm/smollm2.h"
+#include "stt/stt.h"
+#include "llm/llm.h"
 
 
 
@@ -15,8 +15,8 @@ USAGE:
 ./jarvis [options]
 
 Optional args. 
---stt MODEL_SIZE:  The Speech-to-Text model to use. MODEL_SIZE options are (tiny, base, small, medium)[default=tiny].
---llm MODEL_SIZE:  The LLM to use to respond to prompt. MODEL_SIZE options are (small, medium, large)[default=small].
+--stt MODEL_SIZE:  The Speech-to-Text model to use. MODEL_SIZE options are (tiny, base, small, medium)[default=base].
+--llm MODEL_SIZE:  The LLM to use to respond to prompt. MODEL_SIZE options are (small, medium, large)[default=medium].
 
 Optional flags.
 -testna: Runs a test in an environment with no microphone, e.g colab with test spectrogram in assets/test_spectrogram.
@@ -26,14 +26,17 @@ Optional flags.
 
 // TODO: Add memory footprint and metrics.
 
+std::string get_model_path(const char* model_name) {
+    return std::string("models/") + model_name;
+}
 
 int main(int argc, char const *argv[])
 {
-    const char* stt_model_path = "models/whisper-tiny.en.bin";
-    stt::WhisperType stt_model_type = stt::WhisperType::Tiny;
+    const char* stt_model_name = "whisper-base.en.bin";
+    stt::WhisperType stt_model_type = stt::WhisperType::Base;
     
-    const char* llm_model_path = "models/smollm2-sm.bin";
-    llm::SmolLM2Type llm_model_type = llm::SmolLM2Type::Small;
+    const char* llm_model_name = "smollm2-md.bin";
+    llm::SmolLM2Type llm_model_type = llm::SmolLM2Type::Medium;
 
     bool testrun_no_audio_inp = false;
 
@@ -50,19 +53,19 @@ int main(int argc, char const *argv[])
             if (i + 1 < argc) {
                 const std::string_view stt_arg{argv[i + 1]};
                 if (stt_arg == "tiny") {
-                    stt_model_path = "models/whisper-tiny.en.bin";
+                    stt_model_name = "whisper-tiny.en.bin";
                     stt_model_type = stt::WhisperType::Tiny;
                 }
                 else if (stt_arg == "base") {
-                    stt_model_path = "models/whisper-base.en.bin";
+                    stt_model_name = "whisper-base.en.bin";
                     stt_model_type = stt::WhisperType::Base;
                 }
                 else if (stt_arg == "small") {
-                    stt_model_path = "models/whisper-small.en.bin";
+                    stt_model_name = "whisper-small.en.bin";
                     stt_model_type = stt::WhisperType::Small;
                 }
                 else if (stt_arg == "medium") {
-                    stt_model_path = "models/whisper-medium.en.bin";
+                    stt_model_name = "whisper-medium.en.bin";
                     stt_model_type = stt::WhisperType::Medium;
                 }
                 else {
@@ -81,15 +84,15 @@ int main(int argc, char const *argv[])
             if (i + 1 < argc) {
                 const std::string_view llm_arg{argv[i + 1]};
                 if (llm_arg == "small") {
-                    llm_model_path = "models/smollm2-sm.bin";
+                    llm_model_name = "smollm2-sm.bin";
                     llm_model_type = llm::SmolLM2Type::Small;
                 }
                 else if (llm_arg == "medium") {
-                    llm_model_path = "models/smollm2-md.bin";
+                    llm_model_name = "smollm2-md.bin";
                     llm_model_type = llm::SmolLM2Type::Medium;
                 }
                 else if (llm_arg == "large") {
-                    llm_model_path = "models/smollm2-lg.bin";
+                    llm_model_name = "smollm2-lg.bin";
                     llm_model_type = llm::SmolLM2Type::Large;
                 } else {
                     printf("error: invalid llm option: %s.\n", llm_arg.data());
@@ -111,9 +114,9 @@ int main(int argc, char const *argv[])
 
     
 #ifdef _WIN32
-    const std::string cmd_download_command = std::string("python model_dl.py ") + stt_model_path + " " + llm_model_path;
+    const std::string cmd_download_command = std::string("python model_dl.py ") + stt_model_name + " " + llm_model_name;
 #else
-    const std::string cmd_download_command = std::string("python3 model_dl.py ") + stt_model_path + " " + llm_model_path;
+    const std::string cmd_download_command = std::string("python3 model_dl.py ") + stt_model_name + " " + llm_model_name;
 #endif
 
     int res = std::system(cmd_download_command.c_str());
@@ -121,25 +124,23 @@ int main(int argc, char const *argv[])
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
     }
-    stt::WhisperTokenizer whisper_tokenizer;
     stt::Whisper whisper;
-    stt::whisper_init(whisper, stt_model_type, stt_model_path);
+    stt::whisper_init(whisper, stt_model_type, get_model_path(stt_model_name));
 
     int max_ctx = 512;
     llm::SmolLM2 smollm2;
-    llm::smollm2_init(smollm2, llm_model_type, max_ctx, llm_model_path);
-    llm::SmolLMTokenizer smollm2_tokenizer;
+    llm::smollm2_init(smollm2, llm_model_type, max_ctx, get_model_path(llm_model_name));
 
     if (testrun_no_audio_inp) {
         std::unique_ptr<Float16> spectrogram{new Float16[3000*80]};
         stt::read_test_spectrogram(spectrogram.get());
 
         Float16* xa = encoder_forward(spectrogram.get(), whisper.enc, whisper.config);
-        std::string prompt = whisper_decode(whisper, whisper_tokenizer, xa, /*stream*/true);
+        std::string prompt = whisper_decode(whisper, xa, /*stream*/true);
 
         // PROMPT Answering.
         printf("\n[LLM]: \n\n"); fflush(stdout);
-        topk_sample(smollm2, smollm2_tokenizer, prompt);
+        topk_sample(smollm2, prompt);
         printf("\n\n");
 
         printf("Matmul ms: %ld\n", globals::metrics.matmul_ms);
@@ -168,12 +169,12 @@ int main(int argc, char const *argv[])
             const Float16* spectrogram = apreproc.get_mel_spectrogram(signal);
             Float16* xa = encoder_forward(spectrogram, whisper.enc, whisper.config);
             
-            std::string prompt = whisper_decode(whisper, whisper_tokenizer, xa);
+            std::string prompt = whisper_decode(whisper, xa);
             printf("PROMPT: %s\n", prompt.c_str());
 
             // PROMPT Answering.
             printf("\n\n[LLM]: \n\n"); fflush(stdout);
-            topk_sample(smollm2, smollm2_tokenizer, prompt);
+            topk_sample(smollm2, prompt);
             printf("\n\n");
         }
     }

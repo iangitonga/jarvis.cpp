@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <vector>
 #include <unordered_map>
+#include <fstream>
 
 #include "ops.h"
 
@@ -14,6 +15,53 @@
 
 
 namespace stt {
+
+class WhisperTokenizer {
+public:
+    const int sot = 50257;
+    const int eot = 50256;
+    const int transcribe = 50358;
+    const int translate = 50357;
+    const int no_speech = 50361;
+    const int no_timestamps = 50362;
+    const int timestamp_begin = 50363;
+    const int timestamp_end = 51863;
+    const int english_token = 50258;
+
+    WhisperTokenizer() {
+        std::ifstream fin{m_vocab_path, std::ios_base::binary};
+        if(!fin.is_open()) {
+            std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path.c_str());
+            std::exit(EXIT_FAILURE);
+        };
+
+        std::string word;
+        for (int i = 0; i < m_n_vocab; i++) {
+            int32_t len;
+            fin.read((char *) &len, sizeof(len));
+
+            word.resize(len);
+            fin.read((char *) word.data(), len);
+
+            m_token_to_str[i] = word;
+        }     
+    }
+    
+    const std::string& decode_token(int token) {
+        if (token < m_n_vocab) {
+            return m_token_to_str[token];
+        }
+        else {
+            return m_special_token;
+        }
+    }
+
+private:
+    std::string m_vocab_path{"assets/whisper_vocab.bin"};
+    int m_n_vocab{50256};
+    std::unordered_map<int, std::string> m_token_to_str;
+    const std::string m_special_token = "<special_token>";
+};
 
 // English models only.
 enum class WhisperType {
@@ -257,6 +305,7 @@ struct Decoder {
 };
 
 struct Whisper {
+    WhisperTokenizer tokenizer;
     WhisperConfig config;
     Encoder enc;
     Decoder dec;
@@ -695,69 +744,40 @@ void whisper_free(Whisper& model)
 }
 
 
-void whisper_init(Whisper& model, WhisperType type, const char* path) {
+void whisper_init(Whisper& model, WhisperType type, const std::string& path) {
     model.config = get_whisper_config(type);
     whisper_alloc(model);
-    load_whisper(path, model);
+    load_whisper(path.c_str(), model);
 }
 
 void whisper_uninit(Whisper& model) {
      whisper_free(model);
 }
 
-class WhisperTokenizer {
-public:
-    int sot{50257};
-    int eot{50256};
-    int transcribe{50358};
-    int translate{50357};
-    int no_speech{50361};
-    int no_timestamps{50362};
-    int timestamp_begin{50363};
-    int timestamp_end{51863};
-    int english_token{50258};
 
-    WhisperTokenizer() {
-        std::ifstream fin{m_vocab_path, std::ios_base::binary};
-        if(!fin.is_open()) {
-            std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path.c_str());
-            std::exit(EXIT_FAILURE);
-        };
-
-        std::string word;
-        for (int i = 0; i < m_n_vocab; i++) {
-            int32_t len;
-            fin.read((char *) &len, sizeof(len));
-
-            word.resize(len);
-            fin.read((char *) word.data(), len);
-
-            m_token_to_str[i] = word;
-        }     
-    }
-    
-    const std::string& decode_token(int token) {
-        if (token < m_n_vocab) {
-            return m_token_to_str[token];
-        }
-        else {
-            // std::cerr << "Unknown token: " << token << "\n";
-            return m_special_token;
-        }
-    }
-
-private:
-    std::string m_vocab_path{"assets/whisper_vocab.bin"};
-    int m_n_vocab{50256};
-    std::unordered_map<int, std::string> m_token_to_str;
-    const std::string m_special_token = "<special_token>";
+// All non-language tokens that are suppressed during decoding.
+static const int ENGLISH_VOCAB_BAD_TOKENS[98] = {
+    1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63, 90, 91, 92,
+    93, 357, 366, 438, 532, 685, 705, 796, 930, 1058, 1220, 1267, 1279, 1303, 1343, 1377,
+    1391, 1635, 1782, 1875, 1906, 2162, 2361, 2488, 3467, 3880, 4008, 4211, 4600, 4808, 5299,
+    5855, 6329, 7203, 8864, 9609, 9959, 10221, 10563, 10786, 11420, 11709, 11907, 13163,
+    13697, 13700, 14808, 15306, 16410, 16791, 17174, 17992, 19203, 19510, 20368, 20724,
+    22305, 22935, 23090, 27007, 29113, 30109, 30420, 30906, 33409, 34949, 40283, 40493, 
+    40549, 41906, 46111, 47282, 49146, 49704
 };
 
+void suppress_bad_tokens(float* logits, int n_logits)
+{
+    const int n_bad_tokens = sizeof(ENGLISH_VOCAB_BAD_TOKENS) / sizeof(int);
+    for (int i = 0; i < n_bad_tokens; i++) {
+        logits[ENGLISH_VOCAB_BAD_TOKENS[i]] = -INFINITY;
+    }
+}
 
-std::string whisper_decode(Whisper& model, WhisperTokenizer& tokenizer, Float16* audio_embed, bool stream = false)
+std::string whisper_decode(Whisper& model, Float16* audio_embed, bool stream = false)
 {
     std::string prompt;
-    std::vector<int> tokens = {tokenizer.sot, tokenizer.no_timestamps};
+    std::vector<int> tokens = {model.tokenizer.sot, model.tokenizer.no_timestamps};
     if (stream) {
         printf("STT Decoded: ");
         fflush(stdout);
@@ -766,11 +786,12 @@ std::string whisper_decode(Whisper& model, WhisperTokenizer& tokenizer, Float16*
         const int start_pos = i == 0 ? 0 : tokens.size() - 1;
         float* logits = decoder_forward(tokens.data(), tokens.size(), audio_embed, model.dec, model.config, start_pos);
 
-        /// TODO: Add logits suppression.
+        // Vocab size without special tokens, i.e timestamps and tags.
+        const int vocab_size = 50257;
+        suppress_bad_tokens(logits, vocab_size);
+
         int pred_token = -1;
         float max_prob = -INFINITY;
-        // Only consider non_special tokens, i.e timestamps and tags.
-        const int vocab_size = 50257;
         for (int i = 0; i < vocab_size; i++) {
             if (logits[i] > max_prob) {
                 max_prob = logits[i];
@@ -778,11 +799,11 @@ std::string whisper_decode(Whisper& model, WhisperTokenizer& tokenizer, Float16*
             }
         }
 
-        if (pred_token == tokenizer.eot) {
+        if (pred_token == model.tokenizer.eot) {
             break;
         }
 
-        std::string decoded = tokenizer.decode_token(pred_token);
+        std::string decoded = model.tokenizer.decode_token(pred_token);
         if (stream) {
             printf("%s", decoded.c_str());
             fflush(stdout);

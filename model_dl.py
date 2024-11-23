@@ -6,17 +6,14 @@ from urllib import request
 
 
 MODELS_URLS = {
-    "stt": {
-        "whisper-tiny.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-tiny.en.bin",
-        "whisper-base.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-base.en.bin",
-        "whisper-small.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-small.en.bin",
-        "whisper-medium.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-medium.en.bin"
-    },
-    "llm": {
-        "smollm2-sm.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-sm.bin",
-        "smollm2-md.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-md.bin",
-        "smollm2-lg.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-lg.bin"
-    }
+    "whisper-tiny.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-tiny.en.bin",
+    "whisper-base.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-base.en.bin",
+    "whisper-small.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-small.en.bin",
+    "whisper-medium.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-medium.en.bin",
+
+    "smollm2-sm.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-sm.bin",
+    "smollm2-md.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-md.bin",
+    "smollm2-lg.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-lg.bin"
 }
 
 
@@ -38,37 +35,25 @@ def _download_model(url: str, model_path: str):
     print()
 
 
-def download_model(stt_model_path, llm_model_path):
+def download_model(model_names):
     os.makedirs("models", exist_ok=True)
-    if not os.path.exists(stt_model_path):
-        stt_model_name = stt_model_path.split("/")[1]
-        stt_model_url = MODELS_URLS["stt"][stt_model_name]
-        print("Downloading stt model:")
-        try:
-            _download_model(stt_model_url, stt_model_path)
-        except: # Delete if file uncomplete.
-            if os.path.isfile(stt_model_path):
-                os.remove()
-            raise
-    if not os.path.exists(llm_model_path):
-        llm_model_name = llm_model_path.split("/")[1]
-        llm_model_url = MODELS_URLS["llm"][llm_model_name]
-        print("Downloading llm model:")
-        try:
-            _download_model(llm_model_url, llm_model_path)
-        except: # Delete if file uncomplete.
-            if os.path.isfile(llm_model_path):
-                os.remove()
-            raise
-    print()
 
+    for model_name in model_names:
+        model_path = os.path.join("models", model_name)
+        # TODO: Check if the model is complete i.e in case download failed halfway.
+        if not os.path.exists(model_path):
+            model_name = model_path.split("/")[1]
+            model_url = MODELS_URLS[model_name]
+            print(f"Downloading model: {model_name}")
+            _download_model(model_url, model_path)
+            print()
 
-if len(sys.argv) != 3:
+if len(sys.argv) < 2:
     print(f"Args provided: {sys.argv}")
     exit(-1)
 
 try:
-    download_model(sys.argv[1], sys.argv[2])
+    download_model(sys.argv[1:])
 except Exception as e:
     # print(e.with_traceback())
     exit(-2)

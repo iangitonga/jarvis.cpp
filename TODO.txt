@@ -1,15 +1,18 @@
-Saturday
+Sunday
 
-Add stt-only and llm-only models (separate).
-Add better Audio decoding. (suppresion)
-Add output coloring.
-Consolidate files.
+Implement tts-only.
+Implement metrics.
+    - Testrun should give netrics.
+    - Generic: Linear-time, Non-Linear time
+    - stt-time, llm time.
+    - Per op time.
 
 Add GPU support. [SUNDAY]
 
 Add tts-model. [MONDAY-?]
 
 Add automatic voice detection activity (VAD)
-
 Submit prompt?
 Add multilingual models.
+Implement real-time tts and translation.
+Add output coloring.
