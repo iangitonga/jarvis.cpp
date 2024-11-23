@@ -1,8 +1,7 @@
 Saturday
 
-Add single-malloc in whisper.
-Add better Audio decoding. (suppresion)
 Add stt-only and llm-only models (separate).
+Add better Audio decoding. (suppresion)
 Add output coloring.
 Consolidate files.
 

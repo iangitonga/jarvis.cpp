@@ -30,10 +30,10 @@ Optional flags.
 int main(int argc, char const *argv[])
 {
     const char* stt_model_path = "models/whisper-tiny.en.bin";
-    WhisperType stt_model_type = WhisperType::Tiny;
+    stt::WhisperType stt_model_type = stt::WhisperType::Tiny;
     
     const char* llm_model_path = "models/smollm2-sm.bin";
-    SmolLM2Type llm_model_type = SmolLM2Type::Small;
+    llm::SmolLM2Type llm_model_type = llm::SmolLM2Type::Small;
 
     bool testrun_no_audio_inp = false;
 
@@ -51,19 +51,19 @@ int main(int argc, char const *argv[])
                 const std::string_view stt_arg{argv[i + 1]};
                 if (stt_arg == "tiny") {
                     stt_model_path = "models/whisper-tiny.en.bin";
-                    stt_model_type = WhisperType::Tiny;
+                    stt_model_type = stt::WhisperType::Tiny;
                 }
                 else if (stt_arg == "base") {
                     stt_model_path = "models/whisper-base.en.bin";
-                    stt_model_type = WhisperType::Base;
+                    stt_model_type = stt::WhisperType::Base;
                 }
                 else if (stt_arg == "small") {
                     stt_model_path = "models/whisper-small.en.bin";
-                    stt_model_type = WhisperType::Small;
+                    stt_model_type = stt::WhisperType::Small;
                 }
                 else if (stt_arg == "medium") {
                     stt_model_path = "models/whisper-medium.en.bin";
-                    stt_model_type = WhisperType::Medium;
+                    stt_model_type = stt::WhisperType::Medium;
                 }
                 else {
                     printf("error: invalid stt option: %s.\n", stt_arg.data());
@@ -82,15 +82,15 @@ int main(int argc, char const *argv[])
                 const std::string_view llm_arg{argv[i + 1]};
                 if (llm_arg == "small") {
                     llm_model_path = "models/smollm2-sm.bin";
-                    llm_model_type = SmolLM2Type::Small;
+                    llm_model_type = llm::SmolLM2Type::Small;
                 }
                 else if (llm_arg == "medium") {
                     llm_model_path = "models/smollm2-md.bin";
-                    llm_model_type = SmolLM2Type::Medium;
+                    llm_model_type = llm::SmolLM2Type::Medium;
                 }
                 else if (llm_arg == "large") {
                     llm_model_path = "models/smollm2-lg.bin";
-                    llm_model_type = SmolLM2Type::Large;
+                    llm_model_type = llm::SmolLM2Type::Large;
                 } else {
                     printf("error: invalid llm option: %s.\n", llm_arg.data());
                     printf("%s\n", usage_message);
@@ -121,18 +121,18 @@ int main(int argc, char const *argv[])
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
     }
-    WhisperTokenizer whisper_tokenizer;
-    Whisper whisper;
-    init_whisper(whisper, stt_model_type, stt_model_path);
+    stt::WhisperTokenizer whisper_tokenizer;
+    stt::Whisper whisper;
+    stt::whisper_init(whisper, stt_model_type, stt_model_path);
 
     int max_ctx = 512;
-    SmolLM2 smollm2;
-    init_smollm2(smollm2, llm_model_type, max_ctx, llm_model_path);
-    SmolLMTokenizer smollm2_tokenizer;
+    llm::SmolLM2 smollm2;
+    llm::smollm2_init(smollm2, llm_model_type, max_ctx, llm_model_path);
+    llm::SmolLMTokenizer smollm2_tokenizer;
 
     if (testrun_no_audio_inp) {
         std::unique_ptr<Float16> spectrogram{new Float16[3000*80]};
-        read_test_spectrogram(spectrogram.get());
+        stt::read_test_spectrogram(spectrogram.get());
 
         Float16* xa = encoder_forward(spectrogram.get(), whisper.enc, whisper.config);
         std::string prompt = whisper_decode(whisper, whisper_tokenizer, xa, /*stream*/true);
@@ -150,6 +150,7 @@ int main(int argc, char const *argv[])
         AudioPreprocessor apreproc;
 
         std::string cmd_input;
+        printf("\n");
         while (true) {
             printf("Press enter to begin recording (enter q to quit) ...");
             std::getline(std::cin, cmd_input);
@@ -177,8 +178,8 @@ int main(int argc, char const *argv[])
         }
     }
 
-    uninit_whisper(whisper);
-    uninit_smollm2(smollm2);
+    whisper_uninit(whisper);
+    smollm2_uninit(smollm2);
     
     return 0;
 }

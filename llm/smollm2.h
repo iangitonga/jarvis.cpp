@@ -20,6 +20,8 @@
     }
 
 
+namespace llm {
+
 /*
 smollm2-135M-Instruct: sm (0.27GB)  
 smollm2-360M-Instruct: md (0.72GB)
@@ -202,64 +204,74 @@ size_t get_smollm2_acvs_nbytes(SmolLM2& t)
     return nbytes;
 }
 
+Float16* assign_mem(Float16** memptr, size_t advance_size) {
+    Float16* out_ptr = *memptr;
+    *memptr = *memptr + advance_size;
+    return out_ptr;
+}
 
-void alloc_smollm2_weights(Float16* ptr, SmolLM2& t)
+void alloc_smollm2_weights(SmolLM2& t, Float16* memptr)
 {
     const SmolLM2Config& c = t.config;
 
-    t.w.emb_table = ptr;
+    t.w.emb_table = assign_mem(&memptr, c.n_vocab * c.d_embd);
 
-    Float16* prev_layer_ptr = ptr + c.n_vocab * c.d_embd;
     for (int i = 0; i < (int)c.n_layers; i++) {
-        t.w.layers[i].attn_norm = prev_layer_ptr;
-        t.w.layers[i].q_proj    = t.w.layers[i].attn_norm + c.d_embd;
-        t.w.layers[i].k_proj    = t.w.layers[i].q_proj    + c.n_heads * c.d_head * c.d_embd;
-        t.w.layers[i].v_proj    = t.w.layers[i].k_proj    + c.n_kv_heads * c.d_head * c.d_embd;
-        t.w.layers[i].o_proj    = t.w.layers[i].v_proj    + c.n_kv_heads * c.d_head * c.d_embd;
-        t.w.layers[i].mlp_norm  = t.w.layers[i].o_proj    + c.n_heads * c.d_head * c.d_embd;
-        t.w.layers[i].gate_proj = t.w.layers[i].mlp_norm  + c.d_embd;
-        t.w.layers[i].up_proj   = t.w.layers[i].gate_proj + c.d_mlp * c.d_embd;
-        t.w.layers[i].down_proj = t.w.layers[i].up_proj   + c.d_mlp * c.d_embd;
-
-        prev_layer_ptr = t.w.layers[i].down_proj + c.d_mlp * c.d_embd;
+        t.w.layers[i].attn_norm = assign_mem(&memptr, c.d_embd);
+        t.w.layers[i].q_proj    = assign_mem(&memptr, c.n_heads * c.d_head * c.d_embd);
+        t.w.layers[i].k_proj    = assign_mem(&memptr, c.n_kv_heads * c.d_head * c.d_embd);
+        t.w.layers[i].v_proj    = assign_mem(&memptr, c.n_kv_heads * c.d_head * c.d_embd);
+        t.w.layers[i].o_proj    = assign_mem(&memptr, c.n_heads * c.d_head * c.d_embd);
+        t.w.layers[i].mlp_norm  = assign_mem(&memptr, c.d_embd);
+        t.w.layers[i].gate_proj = assign_mem(&memptr, c.d_mlp * c.d_embd);
+        t.w.layers[i].up_proj   = assign_mem(&memptr, c.d_mlp * c.d_embd);
+        t.w.layers[i].down_proj = assign_mem(&memptr, c.d_mlp * c.d_embd);
     }
     
-    t.w.out_norm = prev_layer_ptr;
+    t.w.out_norm = memptr;
 }
 
 
-void alloc_smollm2_acvs(Float16* ptr, SmolLM2& t)
+void alloc_smollm2_acvs(SmolLM2& t, Float16* memptr)
 {
     const SmolLM2Config& c = t.config;
 
-    t.a.emb_acv = ptr;
-
-    Float16* prev_layer_ptr = ptr + t.max_ctx * c.d_embd;
+    t.a.emb_acv = assign_mem(&memptr, t.max_ctx * c.d_embd);
 
     for (int i = 0; i < (int)c.n_layers; i++) {
-        t.a.layers[i].attn_norm_acv = prev_layer_ptr;
-        t.a.layers[i].res_0_acv     = t.a.layers[i].attn_norm_acv + t.max_ctx * c.d_embd;
-        t.a.layers[i].res_1_acv     = t.a.layers[i].res_0_acv     + t.max_ctx * c.d_embd;
-        t.a.layers[i].q_proj_acv    = t.a.layers[i].res_1_acv     + t.max_ctx * c.d_embd;
-        t.a.layers[i].k_proj_acv    = t.a.layers[i].q_proj_acv    + t.max_ctx * c.d_embd;
-        t.a.layers[i].v_proj_acv    = t.a.layers[i].k_proj_acv    + t.max_ctx * c.d_embd;
-        t.a.layers[i].o_proj_acv    = t.a.layers[i].v_proj_acv    + t.max_ctx * c.d_embd;
-        t.a.layers[i].qk_acv        = t.a.layers[i].o_proj_acv    + t.max_ctx * c.d_embd;
-        t.a.layers[i].qkv_acv       = t.a.layers[i].qk_acv        + c.n_heads * t.max_ctx * t.max_ctx;
-        t.a.layers[i].mlp_gate_acv  = t.a.layers[i].qkv_acv       + t.max_ctx * c.n_heads * c.d_head;
-        t.a.layers[i].mlp_up_acv    = t.a.layers[i].mlp_gate_acv  + t.max_ctx * c.d_mlp;
-        t.a.layers[i].mlp_down_acv  = t.a.layers[i].mlp_up_acv    + t.max_ctx * c.d_mlp;
-        t.a.layers[i].mlp_norm_acv  = t.a.layers[i].mlp_down_acv  + t.max_ctx * c.d_embd;
-
-        prev_layer_ptr = t.a.layers[i].mlp_norm_acv + t.max_ctx * c.d_embd;
+        t.a.layers[i].attn_norm_acv = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].res_0_acv     = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].res_1_acv     = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].q_proj_acv    = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].k_proj_acv    = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].v_proj_acv    = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].o_proj_acv    = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].qk_acv        = assign_mem(&memptr, c.n_heads * t.max_ctx * t.max_ctx);
+        t.a.layers[i].qkv_acv       = assign_mem(&memptr, t.max_ctx * c.n_heads * c.d_head);
+        t.a.layers[i].mlp_gate_acv  = assign_mem(&memptr, t.max_ctx * c.d_mlp);
+        t.a.layers[i].mlp_up_acv    = assign_mem(&memptr, t.max_ctx * c.d_mlp);
+        t.a.layers[i].mlp_down_acv  = assign_mem(&memptr, t.max_ctx * c.d_embd);
+        t.a.layers[i].mlp_norm_acv  = assign_mem(&memptr, t.max_ctx * c.d_embd);
     }
 
-    t.a.out_norm_acv  = prev_layer_ptr;
-    t.a.logits_acv    = (float*)(t.a.out_norm_acv + t.max_ctx * c.d_embd); // Always float
+    t.a.out_norm_acv  = assign_mem(&memptr, t.max_ctx * c.d_embd);
+    t.a.logits_acv    = (float*)(memptr); // Always float
 }
 
+void* smollm2_malloc(size_t nbytes) {
+    void* allocated = malloc(nbytes);
+    if (!allocated) {
+        fprintf(stderr, "whisper_alloc: Failed to allocate %ld bytes.", nbytes);
+        exit(-1);
+    }
+    return allocated;
+}
 
-void alloc_smollm2(SmolLM2& model)
+void smollm2_mfree(void* memptr) {
+    free(memptr);
+}
+
+void smollm2_alloc(SmolLM2& model)
 {
     const size_t weights_nbytes = get_smollm2_weights_nbytes(model);
     const size_t acvs_nbytes = get_smollm2_acvs_nbytes(model);
@@ -269,21 +281,18 @@ void alloc_smollm2(SmolLM2& model)
     globals::metrics.acvs_nbytes = acvs_nbytes;
     globals::metrics.model_nbytes = total_nbytes;
 
-    char* memptr = reinterpret_cast<char*>(std::malloc(total_nbytes));
-    if (!memptr) {
-        std::fprintf(stderr, "%s: Failed to allocate %ld bytes.\n", __func__, total_nbytes);
-        std::exit(-1);
-    }
+    char* memptr = (char*)smollm2_malloc(total_nbytes);
+    printf("smollm2 alloc: %ldMB\n", total_nbytes / 1000000);
 
-    Float16* weights_ptr = reinterpret_cast<Float16*>(memptr);
-    Float16* acvs_ptr = reinterpret_cast<Float16*>(memptr + weights_nbytes);
-    alloc_smollm2_weights(weights_ptr, model);
-    alloc_smollm2_acvs(acvs_ptr, model);
+    Float16* weights_ptr = (Float16*)(memptr);
+    Float16* acvs_ptr = (Float16*)(memptr + weights_nbytes);
+    alloc_smollm2_weights(model, weights_ptr);
+    alloc_smollm2_acvs(model, acvs_ptr);
 }
 
-void free_smollm2(SmolLM2& model)
+void smollm2_free(SmolLM2& model)
 {
-    std::free(model.w.emb_table);
+    smollm2_mfree(model.w.emb_table);
 }
 
 
@@ -320,17 +329,17 @@ void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
     fclose(fin);
 }
 
-void init_smollm2(SmolLM2& model, SmolLM2Type type, int max_ctx, const char* path)
+void smollm2_init(SmolLM2& model, SmolLM2Type type, int max_ctx, const char* path)
 {
     model.config = get_smollm2_config(type);
     model.max_ctx = max_ctx;
-    alloc_smollm2(model);
+    smollm2_alloc(model);
     load_smollm2_checkpoint(model, path);
 }
 
-void uninit_smollm2(SmolLM2& model)
+void smollm2_uninit(SmolLM2& model)
 {
-    free_smollm2(model);
+    smollm2_free(model);
 }
 
 
@@ -595,6 +604,7 @@ int topk_sample(SmolLM2& t, SmolLMTokenizer& tokenizer, const std::string& promp
     return tokens.size();
 }
 
+} // namespace llm
 
 // static const char *usage_message = R"(
 // USAGE:

@@ -12,6 +12,9 @@
         std::exit(EXIT_FAILURE); \
     }
 
+
+namespace stt {
+
 // English models only.
 enum class WhisperType {
     Tiny,
@@ -259,123 +262,114 @@ struct Whisper {
     Decoder dec;
 };
 
-// init
-
-
-Float16* f16_malloc(int size)
-{
-    void* ptr = malloc(size * sizeof(Float16));
-    if (!ptr) {
-        fprintf(stderr, "Failed malloc.");
-        exit(-1);
-    }
-    return (Float16*)(ptr);
+Float16* assign_mem(Float16** memptr, size_t advance_size) {
+    Float16* out_ptr = *memptr;
+    *memptr = *memptr + advance_size;
+    return out_ptr;
 }
 
-float* f32_malloc(int size)
+void alloc_encoder_weights(EncoderWeights& w, const WhisperConfig& c, Float16* memptr)
 {
-    void* ptr = malloc(size * sizeof(float));
-    if (!ptr) {
-        fprintf(stderr, "Failed malloc.");
-        exit(-1);
-    }
-    return (float*)(ptr);
-}
-
-
-void alloc_encoder_weights(EncoderWeights& w, const WhisperConfig& c)
-{
-    w.conv1w = f16_malloc(c.n_audio_embd * c.kernel_size * c.n_mels);
-    w.conv1b = f16_malloc(c.n_audio_embd);
-    w.conv2w = f16_malloc(c.n_audio_embd * c.kernel_size * c.n_audio_embd);
-    w.conv2b = f16_malloc(c.n_audio_embd);
-    w.pos_emb = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
+    w.conv1w = assign_mem(&memptr, c.n_audio_embd * c.kernel_size * c.n_mels);
+    w.conv1b = assign_mem(&memptr, c.n_audio_embd);
+    w.conv2w = assign_mem(&memptr, c.n_audio_embd * c.kernel_size * c.n_audio_embd);
+    w.conv2b = assign_mem(&memptr, c.n_audio_embd);
+    w.pos_emb = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
 
     for (int i = 0; i < c.n_audio_layer; i++) {
-        w.layers[i].attn_normw = f16_malloc(c.n_audio_embd);
-        w.layers[i].attn_normb = f16_malloc(c.n_audio_embd);
-        w.layers[i].attn_qw    = f16_malloc(c.n_audio_embd * c.n_audio_embd);
-        w.layers[i].attn_qb    = f16_malloc(c.n_audio_embd);
-        w.layers[i].attn_kw    = f16_malloc(c.n_audio_embd * c.n_audio_embd);
-        w.layers[i].attn_vw    = f16_malloc(c.n_audio_embd * c.n_audio_embd);
-        w.layers[i].attn_vb    = f16_malloc(c.n_audio_embd);
-        w.layers[i].attn_ow    = f16_malloc(c.n_audio_embd * c.n_audio_embd);
-        w.layers[i].attn_ob    = f16_malloc(c.n_audio_embd);
-        w.layers[i].mlp_normw  = f16_malloc(c.n_audio_embd);
-        w.layers[i].mlp_normb  = f16_malloc(c.n_audio_embd);
-        w.layers[i].mlp_upw    = f16_malloc(c.n_audio_embd * c.n_audio_mlp);
-        w.layers[i].mlp_upb    = f16_malloc(c.n_audio_mlp);
-        w.layers[i].mlp_downw  = f16_malloc(c.n_audio_mlp * c.n_audio_embd);
-        w.layers[i].mlp_downb  = f16_malloc(c.n_audio_embd);
+        w.layers[i].attn_normw = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].attn_normb = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].attn_qw    = assign_mem(&memptr, c.n_audio_embd * c.n_audio_embd);
+        w.layers[i].attn_qb    = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].attn_kw    = assign_mem(&memptr, c.n_audio_embd * c.n_audio_embd);
+        w.layers[i].attn_vw    = assign_mem(&memptr, c.n_audio_embd * c.n_audio_embd);
+        w.layers[i].attn_vb    = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].attn_ow    = assign_mem(&memptr, c.n_audio_embd * c.n_audio_embd);
+        w.layers[i].attn_ob    = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].mlp_normw  = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].mlp_normb  = assign_mem(&memptr, c.n_audio_embd);
+        w.layers[i].mlp_upw    = assign_mem(&memptr, c.n_audio_embd * c.n_audio_mlp);
+        w.layers[i].mlp_upb    = assign_mem(&memptr, c.n_audio_mlp);
+        w.layers[i].mlp_downw  = assign_mem(&memptr, c.n_audio_mlp * c.n_audio_embd);
+        w.layers[i].mlp_downb  = assign_mem(&memptr, c.n_audio_embd);
     }
 
-    w.ln_postw = f16_malloc(c.n_audio_embd);
-    w.ln_postb = f16_malloc(c.n_audio_embd);
+    w.ln_postw = assign_mem(&memptr, c.n_audio_embd);
+    w.ln_postb = memptr;
 }
 
-void free_encoder_weights(EncoderWeights& w, const WhisperConfig& c)
+size_t get_encoder_weights_size(const WhisperConfig& c)
 {
-    free(w.conv1w);
-    free(w.conv1b);
-    free(w.conv2w);
-    free(w.conv2b);
-    free(w.pos_emb);
+    size_t nbytes = 0;
+
+    nbytes += c.n_audio_embd * c.kernel_size * c.n_mels;
+    nbytes += c.n_audio_embd;
+    nbytes += c.n_audio_embd * c.kernel_size * c.n_audio_embd;
+    nbytes += c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
 
     for (int i = 0; i < c.n_audio_layer; i++) {
-        free(w.layers[i].attn_normw);
-        free(w.layers[i].attn_normb);
-        free(w.layers[i].attn_qw);
-        free(w.layers[i].attn_qb);
-        free(w.layers[i].attn_kw);
-        free(w.layers[i].attn_vw);
-        free(w.layers[i].attn_vb);
-        free(w.layers[i].attn_ow); 
-        free(w.layers[i].attn_ob); 
-        free(w.layers[i].mlp_normw);
-        free(w.layers[i].mlp_normb);
-        free(w.layers[i].mlp_upw); 
-        free(w.layers[i].mlp_upb);  
-        free(w.layers[i].mlp_downw);
-        free(w.layers[i].mlp_downb);
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd * c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd * c.n_audio_embd;
+        nbytes += c.n_audio_embd * c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd * c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd;
+        nbytes += c.n_audio_embd * c.n_audio_mlp;
+        nbytes += c.n_audio_mlp;
+        nbytes += c.n_audio_mlp * c.n_audio_embd;
+        nbytes += c.n_audio_embd;
     }
 
-    free(w.ln_postw);
-    free(w.ln_postb);
+    nbytes += c.n_audio_embd;
+    nbytes += c.n_audio_embd;
+
+    nbytes = nbytes * sizeof(Float16);
+    return nbytes;
 }
 
-
-void alloc_encoder_acvs(EncoderAcvs& a, const WhisperConfig& c)
+void alloc_encoder_acvs(EncoderAcvs& a, const WhisperConfig& c, Float16* memptr)
 {
     const int inp_frames = 3000;
-
-    a.conv1_acv = f16_malloc(inp_frames * c.n_audio_embd);
-    a.conv2_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.q_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.k_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.v_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.qk_acv    = f16_malloc(c.n_audio_head * c.n_audio_ctx * c.n_audio_ctx);
-    a.qkv_acv   = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.o_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.mlp_up_acv = f16_malloc(c.n_audio_ctx * c.n_audio_mlp);
-    a.mlp_down_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.residual0_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
-    a.residual1_acv = f16_malloc(c.n_audio_ctx * c.n_audio_embd);
+    a.conv1_acv     = assign_mem(&memptr, inp_frames * c.n_audio_embd);
+    a.conv2_acv     = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.q_acv         = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.k_acv         = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.v_acv         = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.qk_acv        = assign_mem(&memptr, c.n_audio_head * c.n_audio_ctx * c.n_audio_ctx);
+    a.qkv_acv       = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.o_acv         = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.mlp_up_acv    = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_mlp);
+    a.mlp_down_acv  = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.residual0_acv = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
+    a.residual1_acv = assign_mem(&memptr, c.n_audio_ctx * c.n_audio_embd);
 }
 
-void free_encoder_acvs(EncoderAcvs& a)
+size_t get_encoder_acvs_size(const WhisperConfig& c)
 {
-    free(a.conv1_acv);
-    free(a.conv2_acv);
-    free(a.q_acv);
-    free(a.k_acv);
-    free(a.v_acv);
-    free(a.qk_acv);
-    free(a.qkv_acv);
-    free(a.o_acv);
-    free(a.mlp_up_acv);
-    free(a.mlp_down_acv );
-    free(a.residual0_acv );
-    free(a.residual1_acv );
+    size_t nbytes = 0;
+
+    const int inp_frames = 3000;
+    nbytes += inp_frames * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_head * c.n_audio_ctx * c.n_audio_ctx;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_mlp;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+    nbytes += c.n_audio_ctx * c.n_audio_embd;
+
+    nbytes = nbytes * sizeof(Float16);
+    return nbytes;
 }
 
 // inp: (n_frames=3000, n_channels=80)
@@ -424,155 +418,151 @@ Float16* encoder_forward(const Float16* inp, Encoder& e, const WhisperConfig& c)
 }
 
 
-void alloc_decoder_acvs(DecoderAcvs& a, const WhisperConfig& c)
+
+void alloc_decoder_weights(DecoderWeights& w, const WhisperConfig& c, Float16* memptr)
 {
-    a.emb_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
+    w.tok_emb = assign_mem(&memptr, c.n_vocab * c.n_text_embd);
+    w.pos_emb = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
 
     for (int i = 0; i < c.n_text_layer; i++) {
-        a.layers[i].residual0_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].residual1_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_norm_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_q_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_k_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_v_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_qk_acv = f16_malloc(c.n_text_head * c.n_text_ctx * c.n_text_ctx);
-        a.layers[i].attn_qkv_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].attn_o_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].xattn_norm_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].xattn_q_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].xattn_k_acv = f16_malloc(c.n_audio_ctx * c.n_text_embd);
-        a.layers[i].xattn_v_acv = f16_malloc(c.n_audio_ctx * c.n_text_embd);
-        a.layers[i].xattn_qk_acv = f16_malloc(c.n_audio_head * c.n_text_embd * c.n_audio_ctx);
-        a.layers[i].xattn_qkv_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].xattn_o_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].mlp_norm_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-        a.layers[i].mlp_up_acv = f16_malloc(c.n_text_ctx * c.n_text_mlp);
-        a.layers[i].mlp_down_acv = f16_malloc(c.n_text_ctx * c.n_text_mlp);
+        w.layers[i].attn_normw = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].attn_normb = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].attn_qw    = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].attn_qb    = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].attn_kw    = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].attn_vw    = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].attn_vb    = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].attn_ow    = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].attn_ob    = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].xattn_normw= assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].xattn_normb= assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].xattn_qw   = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].xattn_qb   = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].xattn_kw   = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].xattn_vw   = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].xattn_vb   = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].xattn_ow   = assign_mem(&memptr, c.n_text_embd * c.n_text_embd);
+        w.layers[i].xattn_ob   = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].mlp_normw  = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].mlp_normb  = assign_mem(&memptr, c.n_text_embd);
+        w.layers[i].mlp_upw    = assign_mem(&memptr, c.n_text_embd * c.n_text_mlp);
+        w.layers[i].mlp_upb    = assign_mem(&memptr, c.n_text_mlp);
+        w.layers[i].mlp_downw  = assign_mem(&memptr, c.n_text_mlp * c.n_text_embd);
+        w.layers[i].mlp_downb  = assign_mem(&memptr, c.n_text_embd);
     }
 
-    a.out_norm_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
-    a.logits = f32_malloc(c.n_vocab);
+    w.out_normw = assign_mem(&memptr, c.n_text_embd);
+    w.out_normb = memptr;
+}
+
+size_t get_decoder_weights_size(const WhisperConfig& c)
+{
+    size_t nbytes = 0;
+
+    nbytes += c.n_vocab * c.n_text_embd;
+    nbytes += c.n_text_ctx * c.n_text_embd;
+
+    for (int i = 0; i < c.n_text_layer; i++) {
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd;
+        nbytes += c.n_text_embd * c.n_text_mlp;
+        nbytes += c.n_text_mlp;
+        nbytes += c.n_text_mlp * c.n_text_embd;
+        nbytes += c.n_text_embd;
+    }
+
+    nbytes += c.n_text_embd;
+    nbytes += c.n_text_embd;
+
+    nbytes = nbytes * sizeof(Float16);
+    return nbytes;
+}
+
+
+void alloc_decoder_acvs(DecoderAcvs& a, const WhisperConfig& c, Float16* memptr)
+{
+    a.emb_acv = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+
+    for (int i = 0; i < c.n_text_layer; i++) {
+        a.layers[i].residual0_acv  = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].residual1_acv  = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_norm_acv  = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_q_acv     = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_k_acv     = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_v_acv     = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_qk_acv    = assign_mem(&memptr, c.n_text_head * c.n_text_ctx * c.n_text_ctx);
+        a.layers[i].attn_qkv_acv   = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].attn_o_acv     = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].xattn_norm_acv = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].xattn_q_acv    = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].xattn_k_acv    = assign_mem(&memptr, c.n_audio_ctx * c.n_text_embd);
+        a.layers[i].xattn_v_acv    = assign_mem(&memptr, c.n_audio_ctx * c.n_text_embd);
+        a.layers[i].xattn_qk_acv   = assign_mem(&memptr, c.n_audio_head * c.n_text_embd * c.n_audio_ctx);
+        a.layers[i].xattn_qkv_acv  = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].xattn_o_acv    = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].mlp_norm_acv   = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+        a.layers[i].mlp_up_acv     = assign_mem(&memptr, c.n_text_ctx * c.n_text_mlp);
+        a.layers[i].mlp_down_acv   = assign_mem(&memptr, c.n_text_ctx * c.n_text_mlp);
+    }
+
+    a.out_norm_acv = assign_mem(&memptr, c.n_text_ctx * c.n_text_embd);
+    a.logits = (float*)memptr;
+}
+
+size_t get_decoder_acvs_size(const WhisperConfig& c)
+{
+    size_t nbytes = 0;
+
+    nbytes += c.n_text_ctx * c.n_text_embd;
+
+    for (int i = 0; i < c.n_text_layer; i++) {
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_head * c.n_text_ctx * c.n_text_ctx;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_audio_ctx * c.n_text_embd;
+        nbytes += c.n_audio_ctx * c.n_text_embd;
+        nbytes += c.n_audio_head * c.n_text_embd * c.n_audio_ctx;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_embd;
+        nbytes += c.n_text_ctx * c.n_text_mlp;
+        nbytes += c.n_text_ctx * c.n_text_mlp;
+    }
+
+    nbytes += c.n_text_ctx * c.n_text_embd;
+    nbytes = nbytes * sizeof(Float16);
+
+    nbytes += c.n_vocab * sizeof(float); // logits
+
+    return nbytes;
 } 
 
-void free_decoder_acvs(DecoderAcvs& a, const WhisperConfig& c)
-{
-    free(a.emb_acv);
-
-    for (int i = 0; i < c.n_text_layer; i++) {
-        free(a.layers[i].residual0_acv);
-        free(a.layers[i].residual1_acv);
-        free(a.layers[i].attn_norm_acv);
-        free(a.layers[i].attn_q_acv);
-        free(a.layers[i].attn_k_acv);
-        free(a.layers[i].attn_v_acv);
-        free(a.layers[i].attn_qk_acv);
-        free(a.layers[i].attn_qkv_acv);
-        free(a.layers[i].attn_o_acv);
-        free(a.layers[i].xattn_norm_acv);
-        free(a.layers[i].xattn_q_acv);
-        free(a.layers[i].xattn_k_acv);
-        free(a.layers[i].xattn_v_acv);
-        free(a.layers[i].xattn_qk_acv);
-        free(a.layers[i].xattn_qkv_acv);
-        free(a.layers[i].xattn_o_acv);
-        free(a.layers[i].mlp_norm_acv);
-        free(a.layers[i].mlp_up_acv);
-        free(a.layers[i].mlp_down_acv);
-    }
-
-    free(a.out_norm_acv);
-    free(a.logits);
-} 
-
-
-void alloc_decoder_weights(DecoderWeights& w, const WhisperConfig& c)
-{
-    w.tok_emb = f16_malloc(c.n_vocab * c.n_text_embd);
-    w.pos_emb = f16_malloc(c.n_text_ctx * c.n_text_embd);
-
-    for (int i = 0; i < c.n_text_layer; i++) {
-        w.layers[i].attn_normw = f16_malloc(c.n_text_embd);
-        w.layers[i].attn_normb = f16_malloc(c.n_text_embd);
-        w.layers[i].attn_qw    = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].attn_qb    = f16_malloc(c.n_text_embd);
-        w.layers[i].attn_kw    = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].attn_vw    = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].attn_vb    = f16_malloc(c.n_text_embd);
-        w.layers[i].attn_ow    = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].attn_ob    = f16_malloc(c.n_text_embd);
-        w.layers[i].xattn_normw= f16_malloc(c.n_text_embd);
-        w.layers[i].xattn_normb= f16_malloc(c.n_text_embd);
-        w.layers[i].xattn_qw   = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].xattn_qb   = f16_malloc(c.n_text_embd);
-        w.layers[i].xattn_kw   = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].xattn_vw   = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].xattn_vb   = f16_malloc(c.n_text_embd);
-        w.layers[i].xattn_ow   = f16_malloc(c.n_text_embd * c.n_text_embd);
-        w.layers[i].xattn_ob   = f16_malloc(c.n_text_embd);
-        w.layers[i].mlp_normw  = f16_malloc(c.n_text_embd);
-        w.layers[i].mlp_normb  = f16_malloc(c.n_text_embd);
-        w.layers[i].mlp_upw    = f16_malloc(c.n_text_embd * c.n_text_mlp);
-        w.layers[i].mlp_upb    = f16_malloc(c.n_text_mlp);
-        w.layers[i].mlp_downw  = f16_malloc(c.n_text_mlp * c.n_text_embd);
-        w.layers[i].mlp_downb  = f16_malloc(c.n_text_embd);
-    }
-
-    w.out_normw = f16_malloc(c.n_text_embd);
-    w.out_normb = f16_malloc(c.n_text_embd);
-}
-
-void free_decoder_weights(DecoderWeights& w, const WhisperConfig& c)
-{
-    free(w.tok_emb);
-    free(w.pos_emb);
-
-    for (int i = 0; i < c.n_text_layer; i++) {
-        free(w.layers[i].attn_normw);
-        free(w.layers[i].attn_normb);
-        free(w.layers[i].attn_qw);
-        free(w.layers[i].attn_qb);
-        free(w.layers[i].attn_kw);
-        free(w.layers[i].attn_vw);
-        free(w.layers[i].attn_vb);
-        free(w.layers[i].attn_ow);
-        free(w.layers[i].attn_ob);
-        free(w.layers[i].xattn_normw);
-        free(w.layers[i].xattn_normb);
-        free(w.layers[i].xattn_qw);
-        free(w.layers[i].xattn_qb);
-        free(w.layers[i].xattn_kw);
-        free(w.layers[i].xattn_vw);
-        free(w.layers[i].xattn_vb);
-        free(w.layers[i].xattn_ow);
-        free(w.layers[i].xattn_ob);
-        free(w.layers[i].mlp_normw);
-        free(w.layers[i].mlp_normb);
-        free(w.layers[i].mlp_upw);
-        free(w.layers[i].mlp_upb);
-        free(w.layers[i].mlp_downw);
-        free(w.layers[i].mlp_downb);
-    }
-
-    free(w.out_normw);
-    free(w.out_normb);
-}
-
-
-void alloc_whisper(Whisper& model)
-{
-    alloc_encoder_weights(model.enc.w, model.config);
-    alloc_encoder_acvs(model.enc.a, model.config);
-    alloc_decoder_weights(model.dec.w, model.config);
-    alloc_decoder_acvs(model.dec.a, model.config);
-}
-
-void free_whisper(Whisper& model)
-{
-    free_encoder_weights(model.enc.w, model.config);
-    free_encoder_acvs(model.enc.a);
-    free_decoder_weights(model.dec.w, model.config);
-    free_decoder_acvs(model.dec.a, model.config);
-}
 
 float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const WhisperConfig& c, int start_pos)
 {
@@ -633,10 +623,6 @@ float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const Wh
 }
 
 
-void read_into(Float16* dst, int size, FILE* stream) {
-    WHISPER_ASSERT(fread(dst, sizeof(Float16), size, stream) == size);
-}
-
 void load_whisper(const char* fpath, Whisper& m)
 {
     std::FILE* fin = std::fopen(fpath, "rb");
@@ -657,82 +643,66 @@ void load_whisper(const char* fpath, Whisper& m)
     }
     const WhisperConfig& c = m.config;
 
-    read_into(m.enc.w.conv1w, c.n_audio_embd * c.kernel_size * c.n_mels, fin);
-    read_into(m.enc.w.conv1b, c.n_audio_embd, fin);
-    read_into(m.enc.w.conv2w, c.n_audio_embd * c.kernel_size * c.n_audio_embd, fin);
-    read_into(m.enc.w.conv2b, c.n_audio_embd, fin);
-    read_into(m.enc.w.pos_emb, c.n_audio_ctx * c.n_audio_embd, fin);
+    const size_t encoder_nbytes = get_encoder_weights_size(c);
+    WHISPER_ASSERT(fread(m.enc.w.conv1w, encoder_nbytes, 1, fin) == 1);
 
-    for (int i = 0; i < c.n_audio_layer; i++) {
-        read_into(m.enc.w.layers[i].attn_normw, c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_normb, c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_qw,    c.n_audio_embd * c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_qb,    c.n_audio_embd,                  fin);
-        read_into(m.enc.w.layers[i].attn_kw,    c.n_audio_embd * c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_vw,    c.n_audio_embd * c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_vb,    c.n_audio_embd,                  fin);
-        read_into(m.enc.w.layers[i].attn_ow,    c.n_audio_embd * c.n_audio_embd, fin);
-        read_into(m.enc.w.layers[i].attn_ob,    c.n_audio_embd,                  fin);
-        read_into(m.enc.w.layers[i].mlp_normw,  c.n_audio_embd,                  fin);
-        read_into(m.enc.w.layers[i].mlp_normb,  c.n_audio_embd,                  fin);
-        read_into(m.enc.w.layers[i].mlp_upw,    c.n_audio_embd * c.n_audio_mlp,  fin);
-        read_into(m.enc.w.layers[i].mlp_upb,    c.n_audio_mlp,                   fin);
-        read_into(m.enc.w.layers[i].mlp_downw,  c.n_audio_mlp * c.n_audio_embd,  fin);
-        read_into(m.enc.w.layers[i].mlp_downb,  c.n_audio_embd,                  fin);
-    }
-
-    read_into(m.enc.w.ln_postw, c.n_audio_embd, fin);
-    read_into(m.enc.w.ln_postb, c.n_audio_embd, fin);
-
-    // DECODER
-    read_into(m.dec.w.tok_emb, c.n_vocab * c.n_text_embd, fin);
-    read_into(m.dec.w.pos_emb, c.n_text_ctx * c.n_text_embd, fin);
-
-    for (int i = 0; i < c.n_text_layer; i++) {
-        read_into(m.dec.w.layers[i].attn_normw, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_normb, c.n_text_embd, fin);
-
-        read_into(m.dec.w.layers[i].attn_qw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_qb, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_kw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_vw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_vb, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_ow, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].attn_ob, c.n_text_embd, fin);
-
-        read_into(m.dec.w.layers[i].xattn_normw, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_normb, c.n_text_embd, fin);
-
-        read_into(m.dec.w.layers[i].xattn_qw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_qb, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_kw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_vw, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_vb, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_ow, c.n_text_embd * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].xattn_ob, c.n_text_embd, fin);
-
-        read_into(m.dec.w.layers[i].mlp_normw, c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].mlp_normb, c.n_text_embd, fin);
-
-        read_into(m.dec.w.layers[i].mlp_upw, c.n_text_embd * c.n_text_mlp, fin);
-        read_into(m.dec.w.layers[i].mlp_upb, c.n_text_mlp, fin);
-        read_into(m.dec.w.layers[i].mlp_downw, c.n_text_mlp * c.n_text_embd, fin);
-        read_into(m.dec.w.layers[i].mlp_downb, c.n_text_embd, fin);
-    }
-
-    read_into(m.dec.w.out_normw, c.n_text_embd, fin);
-    read_into(m.dec.w.out_normb, c.n_text_embd, fin);
+    const size_t decoder_nbytes = get_decoder_weights_size(c);
+    WHISPER_ASSERT(fread(m.dec.w.tok_emb, decoder_nbytes, 1, fin) == 1);
 }
 
 
-void init_whisper(Whisper& model, WhisperType type, const char* path) {
+void* whisper_malloc(size_t nbytes) {
+    void* allocated = malloc(nbytes);
+    if (!allocated) {
+        fprintf(stderr, "whisper_alloc: Failed to allocate %ld bytes.", nbytes);
+        exit(-1);
+    }
+    return allocated;
+}
+
+void whisper_mfree(void* memptr) {
+    free(memptr);
+}
+
+
+void whisper_alloc(Whisper& model)
+{
+    const size_t enc_weights_nbytes = get_encoder_weights_size(model.config);
+    const size_t dec_weights_nbytes = get_decoder_weights_size(model.config);
+    size_t weights_nbytes = enc_weights_nbytes + dec_weights_nbytes;
+    const size_t enc_acvs_nbytes = get_encoder_acvs_size(model.config);
+    const size_t dec_acvs_nbytes = get_decoder_acvs_size(model.config);
+    size_t acvs_nbytes = enc_acvs_nbytes + dec_acvs_nbytes;
+
+    size_t total_nbytes = weights_nbytes + acvs_nbytes;
+
+    char* memptr = (char*)whisper_malloc(total_nbytes);
+    printf("whisper alloc: %ldMB\n", total_nbytes / 1000000);
+    char* enc_weights_ptr = memptr;
+    char* dec_weights_ptr = enc_weights_ptr + enc_weights_nbytes;
+    char* enc_acvs_ptr = dec_weights_ptr + dec_weights_nbytes;
+    char* dec_acvs_ptr = enc_acvs_ptr + enc_acvs_nbytes;
+
+    alloc_encoder_weights(model.enc.w, model.config, (Float16*)enc_weights_ptr);
+    alloc_decoder_weights(model.dec.w, model.config, (Float16*)dec_weights_ptr);
+    alloc_encoder_acvs(model.enc.a, model.config, (Float16*)enc_acvs_ptr);
+    alloc_decoder_acvs(model.dec.a, model.config, (Float16*)dec_acvs_ptr);
+}
+
+void whisper_free(Whisper& model)
+{
+    whisper_mfree(model.enc.w.conv1w);
+}
+
+
+void whisper_init(Whisper& model, WhisperType type, const char* path) {
     model.config = get_whisper_config(type);
-    alloc_whisper(model);
+    whisper_alloc(model);
     load_whisper(path, model);
 }
 
-void uninit_whisper(Whisper& model) {
-     free_whisper(model);
+void whisper_uninit(Whisper& model) {
+     whisper_free(model);
 }
 
 class WhisperTokenizer {
@@ -790,6 +760,7 @@ std::string whisper_decode(Whisper& model, WhisperTokenizer& tokenizer, Float16*
     std::vector<int> tokens = {tokenizer.sot, tokenizer.no_timestamps};
     if (stream) {
         printf("STT Decoded: ");
+        fflush(stdout);
     }
     for (int i = 0; i < model.config.n_text_ctx/2; i++) {
         const int start_pos = i == 0 ? 0 : tokens.size() - 1;
@@ -839,6 +810,8 @@ void read_test_spectrogram(Float16* spectrogram_out)
     JARVIS_ASSERT(spec_file);
     JARVIS_ASSERT(fread(spectrogram_out, sizeof(Float16), 3000*80, spec_file) == 3000*80);
     fclose(spec_file);
+}
+
 }
 
 // int main(int argc, char const *argv[])
