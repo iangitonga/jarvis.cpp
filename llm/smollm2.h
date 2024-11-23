@@ -25,15 +25,14 @@ smollm2-135M-Instruct: sm (0.27GB)
 smollm2-360M-Instruct: md (0.72GB)
 smollm2-1.7B-Instruct: lg (3.42GB)
 */
-enum class ModelType {
+enum class SmolLM2Type {
     Small,
     Medium,
     Large
 };
 
 
-struct SmolLM2Config
-{
+struct SmolLM2Config {
     int n_vocab;
     int n_layers;
     int d_embd;
@@ -44,6 +43,56 @@ struct SmolLM2Config
     float rope_theta;
     float rms_eps;
 };
+
+SmolLM2Config get_smollm2_config(SmolLM2Type type) {
+    switch (type) {
+        case SmolLM2Type::Small: {
+            SmolLM2Config config = {
+                .n_vocab = 49152,
+                .n_layers = 30,
+                .d_embd = 576,
+                .n_heads = 9,
+                .n_kv_heads = 3,
+                .d_head = 64,
+                .d_mlp = 1536,
+                .rope_theta = 100000.0f,
+                .rms_eps = 1e-05f
+            };
+            return config;
+        }
+        case SmolLM2Type::Medium: {
+            SmolLM2Config config = {
+                .n_vocab = 49152,
+                .n_layers = 32,
+                .d_embd = 960,
+                .n_heads = 15,
+                .n_kv_heads = 5,
+                .d_head = 64,
+                .d_mlp = 2560,
+                .rope_theta = 100000.0f,
+                .rms_eps = 1e-05f
+            };
+            return config;
+        }
+        case SmolLM2Type::Large: {
+            SmolLM2Config config = {
+                .n_vocab = 49152,
+                .n_layers = 24,
+                .d_embd = 2048,
+                .n_heads = 32,
+                .n_kv_heads = 32,
+                .d_head = 64,
+                .d_mlp = 8192,
+                .rope_theta = 130000.0f,
+                .rms_eps = 1e-05f
+            };
+            return config;
+        }
+    }
+    // Just to prevent warning: control reaches end of non-void function.
+    return SmolLM2Config{};
+}
+
 
 struct LayerWeights {
     Float16* attn_norm;
@@ -210,10 +259,10 @@ void alloc_smollm2_acvs(Float16* ptr, SmolLM2& t)
 }
 
 
-void alloc_smollm2(SmolLM2& t)
+void alloc_smollm2(SmolLM2& model)
 {
-    const size_t weights_nbytes = get_smollm2_weights_nbytes(t);
-    const size_t acvs_nbytes = get_smollm2_acvs_nbytes(t);
+    const size_t weights_nbytes = get_smollm2_weights_nbytes(model);
+    const size_t acvs_nbytes = get_smollm2_acvs_nbytes(model);
     const size_t total_nbytes = weights_nbytes + acvs_nbytes;
 
     globals::metrics.weights_nbytes = weights_nbytes;
@@ -228,66 +277,15 @@ void alloc_smollm2(SmolLM2& t)
 
     Float16* weights_ptr = reinterpret_cast<Float16*>(memptr);
     Float16* acvs_ptr = reinterpret_cast<Float16*>(memptr + weights_nbytes);
-    alloc_smollm2_weights(weights_ptr, t);
-    alloc_smollm2_acvs(acvs_ptr, t);
+    alloc_smollm2_weights(weights_ptr, model);
+    alloc_smollm2_acvs(acvs_ptr, model);
 }
 
-void free_smollm2(SmolLM2& t)
+void free_smollm2(SmolLM2& model)
 {
-    std::free(t.w.emb_table);
+    std::free(model.w.emb_table);
 }
 
-
-void alloc_smollm2(SmolLM2& t, int max_ctx, ModelType model_type)
-{
-    switch (model_type) {
-        case ModelType::Small: {
-            t.config = {
-                .n_vocab = 49152,
-                .n_layers = 30,
-                .d_embd = 576,
-                .n_heads = 9,
-                .n_kv_heads = 3,
-                .d_head = 64,
-                .d_mlp = 1536,
-                .rope_theta = 100000.0f,
-                .rms_eps = 1e-05f
-            };
-            break;
-        }
-        case ModelType::Medium: {
-            t.config = {
-                .n_vocab = 49152,
-                .n_layers = 32,
-                .d_embd = 960,
-                .n_heads = 15,
-                .n_kv_heads = 5,
-                .d_head = 64,
-                .d_mlp = 2560,
-                .rope_theta = 100000.0f,
-                .rms_eps = 1e-05f
-            };
-            break;
-        }
-        case ModelType::Large: {
-            t.config = {
-                .n_vocab = 49152,
-                .n_layers = 24,
-                .d_embd = 2048,
-                .n_heads = 32,
-                .n_kv_heads = 32,
-                .d_head = 64,
-                .d_mlp = 8192,
-                .rope_theta = 130000.0f,
-                .rms_eps = 1e-05f
-            };
-            break;
-        }
-    }
-
-    t.max_ctx = max_ctx;
-    alloc_smollm2(t);
-}
 
 void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
 {
@@ -320,6 +318,19 @@ void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
     }
 
     fclose(fin);
+}
+
+void init_smollm2(SmolLM2& model, SmolLM2Type type, int max_ctx, const char* path)
+{
+    model.config = get_smollm2_config(type);
+    model.max_ctx = max_ctx;
+    alloc_smollm2(model);
+    load_smollm2_checkpoint(model, path);
+}
+
+void uninit_smollm2(SmolLM2& model)
+{
+    free_smollm2(model);
 }
 
 
@@ -401,17 +412,16 @@ public:
     const int eot_id = 2;
 
 public:
-SmolLMTokenizer(const std::string& vocab_path, int n_vocab)
-    : m_n_vocab{n_vocab}
+SmolLMTokenizer()
 {
-    std::ifstream fin{vocab_path, std::ios_base::binary};
+    std::ifstream fin{m_vocab_path, std::ios_base::binary};
     if(!fin.is_open()) {
-        std::fprintf(stderr, "Failed to open vocab file: %s\n", vocab_path.c_str());
+        std::fprintf(stderr, "Failed to open vocab file: %s\n", m_vocab_path);
         std::exit(EXIT_FAILURE);
     };
 
     std::string word;
-    for (int i = 0; i < n_vocab; i++)
+    for (int i = 0; i < m_n_vocab; i++)
     {
         int32_t len;
         fin.read((char *) &len, sizeof(len));
@@ -498,7 +508,9 @@ private:
     const std::vector<int> encode_suffix = {2, 198, 1, 520, 9531, 198};
     std::map<std::string, int32_t> token_to_id_;
     std::map<int32_t, std::string> id_to_token_;
-    int m_n_vocab;
+    // size of the vocab without special tokens eg <|start_of_text|>.
+    int m_n_vocab = 49152;
+    const char* m_vocab_path = "assets/smollm2_tokenizer.bin";
 };
 
 

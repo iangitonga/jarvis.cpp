@@ -1,11 +1,16 @@
-Add support for all Whisper models.
+Saturday
+
 Add single-malloc in whisper.
-Add better Audio decoding.
+Add better Audio decoding. (suppresion)
 Add stt-only and llm-only models (separate).
 Add output coloring.
+Consolidate files.
 
-Add tts-model.
+Add GPU support. [SUNDAY]
 
-Add GPU support.
+Add tts-model. [MONDAY-?]
 
 Add automatic voice detection activity (VAD)
+
+Submit prompt?
+Add multilingual models.

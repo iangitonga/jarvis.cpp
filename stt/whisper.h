@@ -12,23 +12,121 @@
         std::exit(EXIT_FAILURE); \
     }
 
-struct Config {
-    int n_mels = 80;  // Number of audio mel-frequency bins expected.
-    int n_audio_ctx = 1500;  // Number of frames(context length) in the encoder output representation.
-    int n_audio_embd = 384;  // Dimensionality of each frame of the encoder output representation.
-    int n_audio_head = 6;  // Number of heads in the audio encoder multi-head self-attention layers.
-    int n_audio_layer = 4;  // Number of blocks in the encoder.
-    int n_audio_mlp = 384 * 4;  // embed * 4
-    int n_audio_dhead = 64;
-    int kernel_size = 3;
-    int n_vocab = 51864;
-    int n_text_ctx = 448;   // Max number of tokens to be used as a context in the decoder.
-    int n_text_embd = 384; // # Dimensionality of each token embedding.
-    int n_text_head = 6;  // Number of heads in the text decoder multi-head attention layers.
-    int n_text_layer = 4; // # Number of blocks in the decoder.
-    int n_text_mlp = 384*4;
-    int n_text_dhead = 64;
+// English models only.
+enum class WhisperType {
+    Tiny,
+    Base,
+    Small,
+    Medium
 };
+
+
+struct WhisperConfig {
+    int n_mels;  // encoder input_channels: Number of audio mel-frequency bins.
+    int kernel_size;
+    int n_vocab;
+    int n_audio_ctx;  // Number of frames(context length) in the encoder output representation.
+    int n_audio_embd;  // Dimensionality of each frame of the encoder output representation.
+    int n_audio_head;  // Number of heads in the audio encoder multi-head self-attention layers.
+    int n_audio_layer;  // Number of blocks in the encoder.
+    int n_audio_mlp;  // embed * 4
+    int n_audio_dhead;
+    int n_text_ctx;   // Max number of tokens to be used as a context in the decoder.
+    int n_text_embd; // # Dimensionality of each token embedding.
+    int n_text_head;  // Number of heads in the text decoder multi-head attention layers.
+    int n_text_layer; // # Number of blocks in the decoder.
+    int n_text_mlp;
+    int n_text_dhead;
+};
+
+
+WhisperConfig get_whisper_config(WhisperType type)
+{
+    switch (type) {
+        case WhisperType::Tiny: {
+            WhisperConfig config = {
+                .n_mels = 80,
+                .kernel_size = 3,
+                .n_vocab = 51864,
+                .n_audio_ctx = 1500,
+                .n_audio_embd = 384,
+                .n_audio_head = 6,
+                .n_audio_layer = 4,
+                .n_audio_mlp = 384 * 4,
+                .n_audio_dhead = 64,
+                .n_text_ctx = 448,
+                .n_text_embd = 384,
+                .n_text_head = 6,
+                .n_text_layer = 4,
+                .n_text_mlp = 384*4,
+                .n_text_dhead = 64
+            };
+            return config;
+        }
+        case WhisperType::Base: {
+            WhisperConfig config = {
+                .n_mels = 80,
+                .kernel_size = 3,
+                .n_vocab = 51864,
+                .n_audio_ctx = 1500,
+                .n_audio_embd = 512,
+                .n_audio_head = 8,
+                .n_audio_layer = 6,
+                .n_audio_mlp = 512*4,
+                .n_audio_dhead = 64,
+                .n_text_ctx = 448,
+                .n_text_embd = 512,
+                .n_text_head = 8,
+                .n_text_layer = 6,
+                .n_text_mlp = 512*4,
+                .n_text_dhead = 64
+            };
+            return config;
+        }
+        case WhisperType::Small: {
+            WhisperConfig config = {
+                .n_mels = 80,
+                .kernel_size = 3,
+                .n_vocab = 51864,
+                .n_audio_ctx = 1500,
+                .n_audio_embd = 768,
+                .n_audio_head = 12,
+                .n_audio_layer = 12,
+                .n_audio_mlp = 768*4,
+                .n_audio_dhead = 64,
+                .n_text_ctx = 448,
+                .n_text_embd = 768,
+                .n_text_head = 12,
+                .n_text_layer = 12,
+                .n_text_mlp = 768*4,
+                .n_text_dhead = 64
+            };
+            return config;
+        }
+        case WhisperType::Medium: {
+            WhisperConfig config = {
+                .n_mels = 80,
+                .kernel_size = 3,
+                .n_vocab = 51864,
+                .n_audio_ctx = 1500,
+                .n_audio_embd = 1024,
+                .n_audio_head = 16,
+                .n_audio_layer = 24,
+                .n_audio_mlp = 1024*4,
+                .n_audio_dhead = 64,
+                .n_text_ctx = 448,
+                .n_text_embd = 1024,
+                .n_text_head = 16,
+                .n_text_layer = 24,
+                .n_text_mlp = 1024*4,
+                .n_text_dhead = 64
+            };
+            return config;
+        }
+    }
+    // Just to prevent warning: control reaches end of non-void function.
+    return WhisperConfig{};
+}
 
 
 struct EncoderLayerWeights {
@@ -50,7 +148,7 @@ struct EncoderLayerWeights {
 };
 
 
-#define MAX_ENCODER_LAYERS 4
+#define MAX_ENCODER_LAYERS 24
 struct EncoderWeights {
     Float16* conv1w;
     Float16* conv1b;
@@ -106,7 +204,7 @@ struct DecoderWeightsLayer {
     Float16* mlp_downb;
 };
 
-#define MAX_DECODER_LAYERS 4
+#define MAX_DECODER_LAYERS 24
 struct DecoderWeights {
     Float16* tok_emb;
     Float16* pos_emb;
@@ -114,6 +212,7 @@ struct DecoderWeights {
     Float16* out_normw;
     Float16* out_normb;
 };
+
 
 struct DecoderAcvsLayer {
     Float16* residual0_acv;
@@ -155,9 +254,12 @@ struct Decoder {
 };
 
 struct Whisper {
+    WhisperConfig config;
     Encoder enc;
     Decoder dec;
 };
+
+// init
 
 
 Float16* f16_malloc(int size)
@@ -181,7 +283,7 @@ float* f32_malloc(int size)
 }
 
 
-void alloc_encoder_weights(EncoderWeights& w, const Config& c)
+void alloc_encoder_weights(EncoderWeights& w, const WhisperConfig& c)
 {
     w.conv1w = f16_malloc(c.n_audio_embd * c.kernel_size * c.n_mels);
     w.conv1b = f16_malloc(c.n_audio_embd);
@@ -211,7 +313,7 @@ void alloc_encoder_weights(EncoderWeights& w, const Config& c)
     w.ln_postb = f16_malloc(c.n_audio_embd);
 }
 
-void free_encoder_weights(EncoderWeights& w, const Config& c)
+void free_encoder_weights(EncoderWeights& w, const WhisperConfig& c)
 {
     free(w.conv1w);
     free(w.conv1b);
@@ -242,7 +344,7 @@ void free_encoder_weights(EncoderWeights& w, const Config& c)
 }
 
 
-void alloc_encoder_acvs(EncoderAcvs& a, const Config& c)
+void alloc_encoder_acvs(EncoderAcvs& a, const WhisperConfig& c)
 {
     const int inp_frames = 3000;
 
@@ -278,7 +380,7 @@ void free_encoder_acvs(EncoderAcvs& a)
 
 // inp: (n_frames=3000, n_channels=80)
 // out: (n_audio_ctx=1500, n_audio_embd)
-Float16* encoder_forward(const Float16* inp, Encoder& e, const Config& c)
+Float16* encoder_forward(const Float16* inp, Encoder& e, const WhisperConfig& c)
 {
     const int inp_frames = 3000;
     ops::conv_1d_stride1(inp, e.w.conv1w, e.w.conv1b, e.a.conv1_acv, inp_frames, c.n_mels, c.n_audio_embd);
@@ -322,7 +424,7 @@ Float16* encoder_forward(const Float16* inp, Encoder& e, const Config& c)
 }
 
 
-void alloc_decoder_acvs(DecoderAcvs& a, const Config& c)
+void alloc_decoder_acvs(DecoderAcvs& a, const WhisperConfig& c)
 {
     a.emb_acv = f16_malloc(c.n_text_ctx * c.n_text_embd);
 
@@ -352,7 +454,7 @@ void alloc_decoder_acvs(DecoderAcvs& a, const Config& c)
     a.logits = f32_malloc(c.n_vocab);
 } 
 
-void free_decoder_acvs(DecoderAcvs& a, const Config& c)
+void free_decoder_acvs(DecoderAcvs& a, const WhisperConfig& c)
 {
     free(a.emb_acv);
 
@@ -383,7 +485,7 @@ void free_decoder_acvs(DecoderAcvs& a, const Config& c)
 } 
 
 
-void alloc_decoder_weights(DecoderWeights& w, const Config& c)
+void alloc_decoder_weights(DecoderWeights& w, const WhisperConfig& c)
 {
     w.tok_emb = f16_malloc(c.n_vocab * c.n_text_embd);
     w.pos_emb = f16_malloc(c.n_text_ctx * c.n_text_embd);
@@ -419,7 +521,7 @@ void alloc_decoder_weights(DecoderWeights& w, const Config& c)
     w.out_normb = f16_malloc(c.n_text_embd);
 }
 
-void free_decoder_weights(DecoderWeights& w, const Config& c)
+void free_decoder_weights(DecoderWeights& w, const WhisperConfig& c)
 {
     free(w.tok_emb);
     free(w.pos_emb);
@@ -456,24 +558,23 @@ void free_decoder_weights(DecoderWeights& w, const Config& c)
 }
 
 
-void alloc_whisper(Whisper& model, const Config& config)
+void alloc_whisper(Whisper& model)
 {
-    alloc_encoder_weights(model.enc.w, config);
-    alloc_encoder_acvs(model.enc.a, config);
-    alloc_decoder_weights(model.dec.w, config);
-    alloc_decoder_acvs(model.dec.a, config);
+    alloc_encoder_weights(model.enc.w, model.config);
+    alloc_encoder_acvs(model.enc.a, model.config);
+    alloc_decoder_weights(model.dec.w, model.config);
+    alloc_decoder_acvs(model.dec.a, model.config);
 }
 
-void free_whisper(Whisper& model, const Config& config)
+void free_whisper(Whisper& model)
 {
-    free_encoder_weights(model.enc.w, config);
+    free_encoder_weights(model.enc.w, model.config);
     free_encoder_acvs(model.enc.a);
-    free_decoder_weights(model.dec.w, config);
-    free_decoder_acvs(model.dec.a, config);
+    free_decoder_weights(model.dec.w, model.config);
+    free_decoder_acvs(model.dec.a, model.config);
 }
 
-
-float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const Config& c, int start_pos)
+float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const WhisperConfig& c, int start_pos)
 {
     ops::embed(tokens, d.w.tok_emb, d.a.emb_acv, c.n_vocab, n_ctx, c.n_text_embd, start_pos);
     ops::add(d.a.emb_acv, d.w.pos_emb, d.a.emb_acv, n_ctx, c.n_text_embd, start_pos);
@@ -536,7 +637,7 @@ void read_into(Float16* dst, int size, FILE* stream) {
     WHISPER_ASSERT(fread(dst, sizeof(Float16), size, stream) == size);
 }
 
-void load_whisper(const char* fpath, Whisper& m, const Config& c)
+void load_whisper(const char* fpath, Whisper& m)
 {
     std::FILE* fin = std::fopen(fpath, "rb");
 
@@ -554,6 +655,7 @@ void load_whisper(const char* fpath, Whisper& m, const Config& c)
         fclose(fin);
         exit(-1);
     }
+    const WhisperConfig& c = m.config;
 
     read_into(m.enc.w.conv1w, c.n_audio_embd * c.kernel_size * c.n_mels, fin);
     read_into(m.enc.w.conv1b, c.n_audio_embd, fin);
@@ -623,6 +725,16 @@ void load_whisper(const char* fpath, Whisper& m, const Config& c)
 }
 
 
+void init_whisper(Whisper& model, WhisperType type, const char* path) {
+    model.config = get_whisper_config(type);
+    alloc_whisper(model);
+    load_whisper(path, model);
+}
+
+void uninit_whisper(Whisper& model) {
+     free_whisper(model);
+}
+
 class WhisperTokenizer {
 public:
     int sot{50257};
@@ -670,6 +782,64 @@ private:
     std::unordered_map<int, std::string> m_token_to_str;
     const std::string m_special_token = "<special_token>";
 };
+
+
+std::string whisper_decode(Whisper& model, WhisperTokenizer& tokenizer, Float16* audio_embed, bool stream = false)
+{
+    std::string prompt;
+    std::vector<int> tokens = {tokenizer.sot, tokenizer.no_timestamps};
+    if (stream) {
+        printf("STT Decoded: ");
+    }
+    for (int i = 0; i < model.config.n_text_ctx/2; i++) {
+        const int start_pos = i == 0 ? 0 : tokens.size() - 1;
+        float* logits = decoder_forward(tokens.data(), tokens.size(), audio_embed, model.dec, model.config, start_pos);
+
+        /// TODO: Add logits suppression.
+        int pred_token = -1;
+        float max_prob = -INFINITY;
+        // Only consider non_special tokens, i.e timestamps and tags.
+        const int vocab_size = 50257;
+        for (int i = 0; i < vocab_size; i++) {
+            if (logits[i] > max_prob) {
+                max_prob = logits[i];
+                pred_token = i;
+            }
+        }
+
+        if (pred_token == tokenizer.eot) {
+            break;
+        }
+
+        std::string decoded = tokenizer.decode_token(pred_token);
+        if (stream) {
+            printf("%s", decoded.c_str());
+            fflush(stdout);
+        }
+
+        prompt.append(decoded);
+
+        tokens.push_back(pred_token);
+    }
+    if (stream) {
+        printf("\n");
+    }
+
+    // Remove a leading whitespace which is produced by whisper tokenizer.
+    if (prompt[0] == ' ') {
+        prompt = prompt.substr(1, prompt.size());
+    }
+
+    return prompt;
+}
+
+void read_test_spectrogram(Float16* spectrogram_out)
+{
+    FILE* spec_file = fopen("assets/test_spectrogram.bin", "rb");
+    JARVIS_ASSERT(spec_file);
+    JARVIS_ASSERT(fread(spectrogram_out, sizeof(Float16), 3000*80, spec_file) == 3000*80);
+    fclose(spec_file);
+}
 
 // int main(int argc, char const *argv[])
 // {
