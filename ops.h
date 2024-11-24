@@ -7,6 +7,7 @@
 #include "jarvis_types.h"
 #include "utils.h"
 
+
 #if defined(__AVX__)
 #include <immintrin.h>
 
@@ -107,6 +108,7 @@ void silu_inplace(Float16* inp, int n_ctx, int d_in, int start_pos)
 
 
 #if defined(__AVX__)
+
 __m256 vec_f32x8_load(const Float16* src_ptr) {
 #if defined(__F16C__)
     return _mm256_cvtph_ps(_mm_loadu_si128((__m128i_u *)(const_cast<Float16*>(src_ptr))));
@@ -116,6 +118,17 @@ __m256 vec_f32x8_load(const Float16* src_ptr) {
         f32[i] = fp16_to_fp32(src_ptr[i]);
     }
     return _mm256_loadu_ps(f32);
+#endif
+}
+
+inline void vec_f32x8_store(__m256 vec, Float16* dest_ptr) {
+#if defined(__F16C__)
+    _mm_storeu_si128((__m128i_u *)dest_ptr, _mm256_cvtps_ph(vec, 0));
+#else
+    float* f32 = (float*)(&vec);
+    for (int i = 0; i < SIMD_AVX_LANES; ++i) {
+        dest_ptr[i] = fp32_to_fp16(f32[i]);
+    }
 #endif
 }
 
@@ -147,9 +160,6 @@ static float vec_dot_product(const Float16* vec_a, const Float16* vec_b, int vec
         dot_prod_accum = _mm256_add_ps(_mm256_mul_ps(x0, x1), dot_prod_accum);
     }
     
-    // const float* f = (float *)(&dot_prod_accum);
-    /// TODO:  Improve this: use simd to reduce sum.
-    // float dot_prod = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7];
     float dot_prod = avx_reduce_sum(dot_prod_accum);
 
     for (int i = simd_vec_size; i < vec_size; i++) {
@@ -184,9 +194,6 @@ void lm_head_proj(const Float16* inp, const Float16* weight, float* out, int n_v
     for (int i = n_ctx - 1; i < n_ctx; i++) {
         for (int j = 0; j < n_vocab; j++) {
             const float dot_prod = vec_dot_product(inp + i * d_embd, weight + j*d_embd, d_embd);
-            // for (int k = 0; k < d_embd; k++) {
-            //     dot_prod += fp16_to_fp32(inp[i * d_embd + k]) * fp16_to_fp32(weight[j * d_embd + k]);
-            // }
             out[j] = dot_prod;
         }
     }
@@ -281,7 +288,7 @@ void qk(const Float16* q, const Float16* k, Float16* out, int n_ctx0, int n_ctx1
     const float qk_scaler = 1.0 / sqrtf(d_head);
 
 #if defined(_OPENMP)
-    #pragma omp parallel for collapse(3)
+    #pragma omp parallel for collapse(2)
 #endif
     for (int h = 0; h < q_heads; h++) {
         for (int i = start_pos; i < n_ctx0; i++) {
@@ -407,7 +414,7 @@ void qkv_transposed(const Float16* qk, const Float16* v, Float16* out, int n_ctx
     const int qk_group_size = (int)(q_heads / v_heads);
 
 #if defined(_OPENMP)
-    #pragma omp parallel for collapse(3)
+    #pragma omp parallel for collapse(2)
 #endif
     for (int h = 0; h < q_heads; h++) {
         for (int i = start_pos; i < n_ctx0; i++) {
@@ -549,23 +556,88 @@ void conv_1d_stride2(const Float16* inp, const Float16* weight, const Float16* b
     }
 }
 
+Float16* get_gelu_table() {
+    // TODO: fix memory leak.
+    Float16* table = new Float16[65536];
+    for (int i = 0; i < 65536; i++) {
+        const float inp = fp16_to_fp32((Float16)i);
+        const float res = 0.5 * inp 
+                    * (1.0f + std::tanh(std::sqrt(2.0f / 3.141592653589793f)
+                    * (inp + 0.044715f * std::pow(inp, 3.0f))));
+        table[i] = fp32_to_fp16(res);
+    }
+
+    return table;
+}
+
+namespace tables {
+// gelu_table[i] = gelu(fp16_to_fp32(i))
+static Float16* gelu_table = get_gelu_table();
+}
 
 // TODO: Replace with lookup table.
 void gelu(const Float16* inp, Float16* out, int n_ctx, int d_in, int start_pos=0)
 {
     for (int i = start_pos; i < n_ctx; i++) {
         for (int j = 0; j < d_in; j++){
-            const float x = fp16_to_fp32(inp[i * d_in + j]);
-            const float res = 0.5 * x 
-                            * (1.0f + std::tanh(std::sqrt(2.0f / 3.141592653589793f)
-                            * (x + 0.044715f * std::pow(x, 3.0f))));
-            out[i * d_in + j] = fp32_to_fp16(res);
+            out[i * d_in + j] = tables::gelu_table[inp[i * d_in + j]];
         }
-    }
+    }   
+    // for (int i = start_pos; i < n_ctx; i++) {
+    //     for (int j = 0; j < d_in; j++){
+    //         const float x = fp16_to_fp32(inp[i * d_in + j]);
+    //         const float res = 0.5 * x 
+    //                         * (1.0f + std::tanh(std::sqrt(2.0f / 3.141592653589793f)
+    //                         * (x + 0.044715f * std::pow(x, 3.0f))));
+    //         out[i * d_in + j] = fp32_to_fp16(res);
+    //     }
+    // }
 }
 
 void layer_norm(const Float16* inp, const Float16* weight, const Float16* bias, Float16* out, int n_ctx, int d_in, int start_pos=0)
 {
+
+#if defined(__AVX__)
+    JARVIS_ASSERT(d_in % SIMD_AVX_LANES == 0);
+
+    for (int i = 0; i < n_ctx; i++) {
+        // Mean calculation.
+        __m256 mean_accum = _mm256_setzero_ps();
+        for (int j = 0; j < d_in; j += SIMD_AVX_LANES) {
+            const __m256 x = vec_f32x8_load(inp + i*d_in + j);
+            mean_accum = _mm256_add_ps(mean_accum, x);
+        }
+        const float mean = avx_reduce_sum(mean_accum) / (float)d_in;
+
+        // sum, minus<scalar>, pow, 
+
+        const __m256 vmean = _mm256_set1_ps(mean);
+        // Standard deviation calculation.
+        __m256 var_accum = _mm256_setzero_ps();
+        for (int j = 0; j < d_in; j += SIMD_AVX_LANES) {
+            const __m256 vx = vec_f32x8_load(inp + i*d_in + j);
+            const __m256 vx_sub = _mm256_sub_ps(vx, vmean);
+            var_accum = _mm256_add_ps(var_accum, _mm256_mul_ps(vx_sub, vx_sub));
+        }
+        const float var = avx_reduce_sum(var_accum);
+        const float stddev = std::sqrt(var / (float)d_in);
+
+        // Normalization.
+        const __m256 vstddev = _mm256_set1_ps(stddev);
+        // Epsilon added to standard deviation prevents div by zero.
+        const __m256 veps = _mm256_set1_ps(1e-05f);
+        for (int j = 0; j < d_in; j += SIMD_AVX_LANES) {
+            const __m256 vx = vec_f32x8_load(inp + i * d_in + j);
+            const __m256 vw = vec_f32x8_load(weight + j);
+            const __m256 vb = vec_f32x8_load(bias + j);
+            const __m256 v0 = _mm256_div_ps(_mm256_sub_ps(vx, vmean), _mm256_add_ps(vstddev, veps));
+            const __m256 res = _mm256_add_ps(_mm256_mul_ps(v0, vw), vb);
+            vec_f32x8_store(res, out + i * d_in + j);
+        }
+    }
+}
+
+#else
     for (int i = 0; i < n_ctx; i++) {
         // Mean calculation.
         float mean_accum = 0.0f;
@@ -573,6 +645,8 @@ void layer_norm(const Float16* inp, const Float16* weight, const Float16* bias, 
             mean_accum += fp16_to_fp32(inp[i * d_in + j]);
         }
         const float mean = mean_accum / (float)d_in;
+
+        // sum, minus<scalar>, pow, 
 
         // Standard deviation calculation.
         float variance_accum = 0.0f;
@@ -594,5 +668,5 @@ void layer_norm(const Float16* inp, const Float16* weight, const Float16* bias, 
         }
     }
 }
-
+#endif
 } // namespace ops.
