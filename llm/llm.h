@@ -393,12 +393,8 @@ void smollm2_alloc(SmolLM2& model)
     const size_t acvs_nbytes = get_smollm2_acvs_nbytes(model);
     const size_t total_nbytes = weights_nbytes + acvs_nbytes;
 
-    globals::metrics.weights_nbytes = weights_nbytes;
-    globals::metrics.acvs_nbytes = acvs_nbytes;
-    globals::metrics.model_nbytes = total_nbytes;
-
     char* memptr = (char*)smollm2_malloc(total_nbytes);
-    printf("smollm2 alloc: %ldMB\n", total_nbytes / 1000000);
+    printf("llm_malloc: %ldMB\n", total_nbytes / 1000000);
 
     Float16* weights_ptr = (Float16*)(memptr);
     Float16* acvs_ptr = (Float16*)(memptr + weights_nbytes);
@@ -414,8 +410,6 @@ void smollm2_free(SmolLM2& model)
 
 void load_smollm2_checkpoint(SmolLM2& t, const char* ckpt_path)
 {
-    Timer timer{&globals::metrics.load_time_ms};
-
     std::FILE* fin = std::fopen(ckpt_path, "rb");
 
     if (!fin) {
@@ -461,8 +455,6 @@ void smollm2_uninit(SmolLM2& model)
 
 float* forward(SmolLM2& t, const int* tokens, int n_ctx, int start_pos)
 {
-    Timer timer{&globals::metrics.inference_time_ms};
-
     // Shorthands
     const SmolLM2Config& c = t.config;
     const LayerWeights* wl = t.w.layers;
@@ -537,8 +529,6 @@ int topk_sample(SmolLM2& model, const std::string& prompt, int top_k=40, float t
         const int start_pos = i == 0 ? 0 : tokens.size()-1;
 
         const float* logits = forward(model, tokens.data(), tokens.size(), start_pos);
-
-        Timer sample_timer{&globals::metrics.sample_time_ms};
 
         logits_probs.clear();
         for (int j = 0; j < logits_size; ++j) {

@@ -19,7 +19,7 @@ Optional args.
 --llm MODEL_SIZE:  The LLM to use to respond to prompt. MODEL_SIZE options are (small, medium, large)[default=medium].
 
 Optional flags.
--testna: Runs a test in an environment with no microphone, e.g colab with test spectrogram in assets/test_spectrogram.
+-testrun: Runs a test in an environment with no microphone, e.g colab with test spectrogram in assets/test_spectrogram.
 
 )";
 
@@ -46,7 +46,7 @@ int main(int argc, char const *argv[])
             printf("%s\n", usage_message);
             return 0;
         }
-        else if (arg == "-testna") {
+        else if (arg == "-testrun") {
             testrun_no_audio_inp = true;
         }
         else if (arg == "--stt") {
@@ -124,6 +124,10 @@ int main(int argc, char const *argv[])
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
     }
+
+    int64_t load_time_ms = 0;
+
+    Timer load_timer{&load_time_ms};
     stt::Whisper whisper;
     stt::whisper_init(whisper, stt_model_type, get_model_path(stt_model_name));
 
@@ -131,20 +135,38 @@ int main(int argc, char const *argv[])
     llm::SmolLM2 smollm2;
     llm::smollm2_init(smollm2, llm_model_type, max_ctx, get_model_path(llm_model_name));
 
+    load_timer.stop();
+
     if (testrun_no_audio_inp) {
         std::unique_ptr<Float16> spectrogram{new Float16[3000*80]};
         stt::read_test_spectrogram(spectrogram.get());
 
-        Float16* xa = encoder_forward(spectrogram.get(), whisper.enc, whisper.config);
-        std::string prompt = whisper_decode(whisper, xa, /*stream*/true);
+        int64_t encoder_time_ms;
+        int64_t decoder_time_ms;
+        int64_t llm_time_ms;
 
+        Timer enc_timer{&encoder_time_ms};
+        Float16* xa = encoder_forward(spectrogram.get(), whisper.enc, whisper.config);
+        enc_timer.stop();
+
+        Timer dec_timer{&decoder_time_ms};
+        std::string prompt = whisper_decode(whisper, xa, /*stream*/true);
+        dec_timer.stop();
+ 
         // PROMPT Answering.
         printf("\n[LLM]: \n\n"); fflush(stdout);
-        topk_sample(smollm2, prompt);
+        Timer llm_timer{&llm_time_ms};
+        const int n_llm_tokens = topk_sample(smollm2, prompt);
+        llm_timer.stop();
         printf("\n\n");
 
-        printf("Matmul ms: %ld\n", globals::metrics.matmul_ms);
-        printf("NonMatmul ms: %ld\n", globals::metrics.non_matmul_ms);
+        const float llm_toks_per_sec = (float)n_llm_tokens / ((float)llm_time_ms/1000.0f);
+        printf("timer: llm_toks/sec: %4.2f\n", llm_toks_per_sec);
+        printf("timer: encoder_time: %ldms\n", encoder_time_ms);
+        printf("timer: decoder_time: %ldms\n", decoder_time_ms);
+        printf("timer: load_time   : %ldms\n", load_time_ms);
+        printf("timer: matmul_ops  : %ldms\n", ops::ops_metrics.matmul_ms);
+        printf("timer: other_ops   : %ldms\n", ops::ops_metrics.non_matmul_ms);
     }
     else {
         AudioStream stream;

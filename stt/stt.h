@@ -726,7 +726,7 @@ void whisper_alloc(Whisper& model)
     size_t total_nbytes = weights_nbytes + acvs_nbytes;
 
     char* memptr = (char*)whisper_malloc(total_nbytes);
-    printf("whisper alloc: %ldMB\n", total_nbytes / 1000000);
+    printf("stt_malloc: %ldMB\n", total_nbytes / 1000000);
     char* enc_weights_ptr = memptr;
     char* dec_weights_ptr = enc_weights_ptr + enc_weights_nbytes;
     char* enc_acvs_ptr = dec_weights_ptr + dec_weights_nbytes;

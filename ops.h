@@ -17,10 +17,16 @@
 
 namespace ops {
 
+struct OpsMetrics {
+    int64_t matmul_ms = 0;
+    int64_t non_matmul_ms = 0;
+};
+
+static OpsMetrics ops_metrics;
 
 void embed(const int* tokens, Float16* emb_table, Float16* out, int n_vocab, int n_ctx, int d_embd, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         const int emb_table_idx = tokens[i];
@@ -37,7 +43,7 @@ void embed(const int* tokens, Float16* emb_table, Float16* out, int n_vocab, int
 // out   : (n_ctx, d_embd)
 void rms_norm(const Float16* inp, const Float16* weight, Float16* out, int n_ctx, int d_embd, float eps, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         // compute mean of val squared.
@@ -60,7 +66,7 @@ void rms_norm(const Float16* inp, const Float16* weight, Float16* out, int n_ctx
 
 void add(const Float16* inp0, const Float16* inp1, Float16* out, int n_ctx, int d_embd, int start_pos=0)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         for (int j = 0; j < d_embd; j++) {
@@ -75,7 +81,7 @@ void add(const Float16* inp0, const Float16* inp1, Float16* out, int n_ctx, int 
 // out: (n_ctx, d_embd)
 void mul_inplace(Float16* inp0, const Float16* inp1, int n_ctx, int d_in, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         for (int j = 0; j < d_in; j++) {
@@ -89,7 +95,7 @@ void mul_inplace(Float16* inp0, const Float16* inp1, int n_ctx, int d_in, int st
 // out: (n_ctx, d_embd)
 void silu_inplace(Float16* inp, int n_ctx, int d_in, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
      for (int i = start_pos; i < n_ctx; i++) {
         for (int j = 0; j < d_in; j++) {
@@ -170,7 +176,7 @@ static float vec_dot_product(const Float16* vec_a, const Float16* vec_b, int vec
 // out   : n_vocab 
 void lm_head_proj(const Float16* inp, const Float16* weight, float* out, int n_vocab, int n_ctx, int d_embd)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
 #if defined(_OPENMP)
         #pragma omp parallel for collapse(2)
@@ -192,7 +198,7 @@ void lm_head_proj(const Float16* inp, const Float16* weight, float* out, int n_v
 // out : (n_ctx, d_out)
 void matmul_2d(const Float16* inp0, const Float16* inp1, Float16* out, int n_ctx, int d_in, int d_out, int start_pos=0)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
 #if defined(_OPENMP)
         #pragma omp parallel for collapse(2)
@@ -209,7 +215,7 @@ void linear_2d(const Float16* inp0, const Float16* inp1, const Float16* bias, Fl
 {
     matmul_2d(inp0, inp1, out, n_ctx, d_in, d_out, start_pos);
 
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         for (int j = 0; j < d_out; j++) {
@@ -223,7 +229,7 @@ void linear_2d(const Float16* inp0, const Float16* inp1, const Float16* bias, Fl
 // out: [d_out, n_ctx]
 void linear_2d_transpose_out(const Float16* inp0, const Float16* inp1, const Float16* bias, Float16* out, int n_ctx, int d_in, int d_out)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
     for (int i = 0; i < n_ctx; i++) {
         for (int j = 0; j < d_out; j++) {
@@ -238,7 +244,7 @@ void linear_2d_transpose_out(const Float16* inp0, const Float16* inp1, const Flo
 // out: (q_heads, n_ctx, n_ctx)
 void qk_masked(const Float16* q, const Float16* k, Float16* out, int n_ctx, int q_heads, int kv_heads, int d_head, int start_pos=0)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
     const int k_heads = kv_heads;
     // Note: In qroup query attn, we divide queries together into groups,
@@ -265,7 +271,7 @@ void qk_masked(const Float16* q, const Float16* k, Float16* out, int n_ctx, int 
 
 void qk(const Float16* q, const Float16* k, Float16* out, int n_ctx0, int n_ctx1, int q_heads, int kv_heads, int d_head, int start_pos=0)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
     const int k_heads = kv_heads;
     // Note: In qroup query attn, we divide queries together into groups,
@@ -291,7 +297,7 @@ void qk(const Float16* q, const Float16* k, Float16* out, int n_ctx0, int n_ctx1
 // inp: (n_heads, n_ctx, n_ctx)
 void attn_mask_inplace(Float16* inp, int n_heads, int n_ctx, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_heads; i++) {
         for (int j = 0; j < n_ctx; j++) {
@@ -306,7 +312,7 @@ void attn_mask_inplace(Float16* inp, int n_heads, int n_ctx, int start_pos)
 // inp: [n_heads, n_ctx, n_ctz]
 void softmax_inplace(Float16* inp, int n_heads, int n_ctx0, int n_ctx1, int start_pos=0)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int h = 0; h < n_heads; h++) {
         for (int i = start_pos; i < n_ctx0; i++) {
@@ -339,7 +345,7 @@ void softmax_inplace(Float16* inp, int n_heads, int n_ctx0, int n_ctx1, int star
 // out: (n_ctx0, q_heads, d_head)
 void qkv(const Float16* qk, const Float16* v, Float16* out, int n_ctx0, int n_ctx1, int q_heads, int kv_heads, int d_head, int start_pos=0)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
     const int v_heads = kv_heads;
     const int qk_group_size = (int)(q_heads / v_heads);
@@ -395,7 +401,7 @@ a, b
 // out: (n_ctx0, q_heads, d_head)
 void qkv_transposed(const Float16* qk, const Float16* v, Float16* out, int n_ctx0, int n_ctx1, int q_heads, int kv_heads, int d_head, int start_pos=0)
 {
-    Timer timer{&globals::metrics.matmul_ms};
+    Timer timer{&ops_metrics.matmul_ms};
 
     const int v_heads = kv_heads;
     const int qk_group_size = (int)(q_heads / v_heads);
@@ -419,7 +425,7 @@ void qkv_transposed(const Float16* qk, const Float16* v, Float16* out, int n_ctx
 // inp: [n_ctx, n_head, d_head]
 void rotary_emb(Float16* inp, int n_ctx, int n_heads, int d_head, float theta, int start_pos)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; ++i) {
        for (int h = 0; h < n_heads; ++h) {
@@ -451,7 +457,7 @@ void rotary_emb(Float16* inp, int n_ctx, int n_heads, int d_head, float theta, i
 
 void copy_tensors(const Float16* src, Float16* dest, int n_ctx, int d_in, int start_pos=0)
 {
-    Timer timer{&globals::metrics.non_matmul_ms};
+    Timer timer{&ops_metrics.non_matmul_ms};
 
     for (int i = start_pos; i < n_ctx; i++) {
         memcpy(dest + i * d_in, src + i * d_in, d_in*sizeof(Float16));

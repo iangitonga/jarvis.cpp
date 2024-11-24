@@ -1,11 +1,6 @@
 Sunday
 
-Implement tts-only.
-Implement metrics.
-    - Testrun should give netrics.
-    - Generic: Linear-time, Non-Linear time
-    - stt-time, llm time.
-    - Per op time.
+Implement tts-only (no microphone, (wav)audio input).
 
 Add GPU support. [SUNDAY]
 
