@@ -421,47 +421,49 @@ size_t get_encoder_acvs_size(const WhisperConfig& c)
     return nbytes;
 }
 
-// inp: (n_frames=3000, n_channels=80)
-// out: (n_audio_ctx=1500, n_audio_embd)
-Float16* encoder_forward(const Float16* inp, Encoder& e, const WhisperConfig& c)
+// inp: (n_frames=n_ctx, n_channels=80)
+// out: (n_audio_ctx=n_ctx/2, n_audio_embd)
+Float16* encoder_forward(const Float16* inp, int n_ctx, Encoder& e, const WhisperConfig& c)
 {
-    const int inp_frames = 3000;
-    ops::conv_1d_stride1(inp, e.w.conv1w, e.w.conv1b, e.a.conv1_acv, inp_frames, c.n_mels, c.n_audio_embd);
-    ops::gelu(e.a.conv1_acv, e.a.conv1_acv, inp_frames, c.n_audio_embd);
-    ops::conv_1d_stride2(e.a.conv1_acv, e.w.conv2w, e.w.conv2b, e.a.conv2_acv, inp_frames, c.n_audio_embd, c.n_audio_embd);
-    ops::gelu(e.a.conv2_acv, e.a.conv2_acv, c.n_audio_ctx, c.n_audio_embd);
+    JARVIS_ASSERT(n_ctx % 2 == 0);
 
-    ops::add(e.a.conv2_acv, e.w.pos_emb, e.a.conv2_acv, c.n_audio_ctx, c.n_audio_embd);
+    ops::conv_1d_stride1(inp, e.w.conv1w, e.w.conv1b, e.a.conv1_acv, n_ctx, c.n_mels, c.n_audio_embd);
+    ops::gelu(e.a.conv1_acv, e.a.conv1_acv, n_ctx, c.n_audio_embd);
+    ops::conv_1d_stride2(e.a.conv1_acv, e.w.conv2w, e.w.conv2b, e.a.conv2_acv, n_ctx, c.n_audio_embd, c.n_audio_embd);
+    n_ctx = n_ctx / 2; // because of stride=2
+    ops::gelu(e.a.conv2_acv, e.a.conv2_acv, n_ctx, c.n_audio_embd);
+
+    ops::add(e.a.conv2_acv, e.w.pos_emb, e.a.conv2_acv, n_ctx, c.n_audio_embd);
 
     Float16* layer_inp = e.a.conv2_acv;
 
     for (int i = 0; i < c.n_audio_layer; i++) {
-        ops::copy_tensors(layer_inp, e.a.residual0_acv, c.n_audio_ctx, c.n_audio_embd);
-        ops::layer_norm(layer_inp, e.w.layers[i].attn_normw, e.w.layers[i].attn_normb, layer_inp, c.n_audio_ctx, c.n_audio_embd);
+        ops::copy_tensors(layer_inp, e.a.residual0_acv, n_ctx, c.n_audio_embd);
+        ops::layer_norm(layer_inp, e.w.layers[i].attn_normw, e.w.layers[i].attn_normb, layer_inp, n_ctx, c.n_audio_embd);
 
-        ops::linear_2d(layer_inp, e.w.layers[i].attn_qw, e.w.layers[i].attn_qb, e.a.q_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
-        ops::matmul_2d(layer_inp, e.w.layers[i].attn_kw, e.a.k_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
-        ops::linear_2d_transpose_out(layer_inp, e.w.layers[i].attn_vw, e.w.layers[i].attn_vb, e.a.v_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
+        ops::linear_2d(layer_inp, e.w.layers[i].attn_qw, e.w.layers[i].attn_qb, e.a.q_acv, n_ctx, c.n_audio_embd, c.n_audio_embd);
+        ops::matmul_2d(layer_inp, e.w.layers[i].attn_kw, e.a.k_acv, n_ctx, c.n_audio_embd, c.n_audio_embd);
+        ops::linear_2d_transpose_out(layer_inp, e.w.layers[i].attn_vw, e.w.layers[i].attn_vb, e.a.v_acv, n_ctx, c.n_audio_embd, c.n_audio_embd);
 
-        ops::qk(e.a.q_acv, e.a.k_acv, e.a.qk_acv, c.n_audio_ctx,  c.n_audio_ctx, c.n_audio_head, c.n_audio_head, c.n_audio_dhead);
+        ops::qk(e.a.q_acv, e.a.k_acv, e.a.qk_acv, n_ctx, n_ctx, c.n_audio_head, c.n_audio_head, c.n_audio_dhead);
 
-        ops::softmax_inplace(e.a.qk_acv, c.n_audio_head, c.n_audio_ctx, c.n_audio_ctx);
-        ops::qkv_transposed(e.a.qk_acv, e.a.v_acv, e.a.qkv_acv, c.n_audio_ctx, c.n_audio_ctx, c.n_audio_head, c.n_audio_head, c.n_audio_dhead);
-        ops::linear_2d(e.a.qkv_acv, e.w.layers[i].attn_ow, e.w.layers[i].attn_ob, e.a.o_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
-        ops::add(e.a.residual0_acv, e.a.o_acv, e.a.residual0_acv, c.n_audio_ctx, c.n_audio_embd);
+        ops::softmax_inplace(e.a.qk_acv, c.n_audio_head, n_ctx, n_ctx);
+        ops::qkv_transposed(e.a.qk_acv, e.a.v_acv, e.a.qkv_acv, n_ctx, n_ctx, c.n_audio_head, c.n_audio_head, c.n_audio_dhead);
+        ops::linear_2d(e.a.qkv_acv, e.w.layers[i].attn_ow, e.w.layers[i].attn_ob, e.a.o_acv, n_ctx, c.n_audio_embd, c.n_audio_embd);
+        ops::add(e.a.residual0_acv, e.a.o_acv, e.a.residual0_acv, n_ctx, c.n_audio_embd);
 
-        ops::copy_tensors(e.a.residual0_acv, e.a.residual1_acv, c.n_audio_ctx, c.n_audio_embd);
+        ops::copy_tensors(e.a.residual0_acv, e.a.residual1_acv, n_ctx, c.n_audio_embd);
 
-        ops::layer_norm(e.a.residual0_acv, e.w.layers[i].mlp_normw, e.w.layers[i].mlp_normb, e.a.residual0_acv, c.n_audio_ctx, c.n_audio_embd);
-        ops::linear_2d(e.a.residual0_acv, e.w.layers[i].mlp_upw, e.w.layers[i].mlp_upb, e.a.mlp_up_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_mlp);
-        ops::gelu(e.a.mlp_up_acv, e.a.mlp_up_acv, c.n_audio_ctx, c.n_audio_mlp);
-        ops::linear_2d(e.a.mlp_up_acv, e.w.layers[i].mlp_downw, e.w.layers[i].mlp_downb, e.a.mlp_down_acv, c.n_audio_ctx, c.n_audio_mlp, c.n_audio_embd);
-        ops::add(e.a.residual1_acv, e.a.mlp_down_acv, e.a.residual1_acv, c.n_audio_ctx, c.n_audio_embd);
+        ops::layer_norm(e.a.residual0_acv, e.w.layers[i].mlp_normw, e.w.layers[i].mlp_normb, e.a.residual0_acv, n_ctx, c.n_audio_embd);
+        ops::linear_2d(e.a.residual0_acv, e.w.layers[i].mlp_upw, e.w.layers[i].mlp_upb, e.a.mlp_up_acv, n_ctx, c.n_audio_embd, c.n_audio_mlp);
+        ops::gelu(e.a.mlp_up_acv, e.a.mlp_up_acv, n_ctx, c.n_audio_mlp);
+        ops::linear_2d(e.a.mlp_up_acv, e.w.layers[i].mlp_downw, e.w.layers[i].mlp_downb, e.a.mlp_down_acv, n_ctx, c.n_audio_mlp, c.n_audio_embd);
+        ops::add(e.a.residual1_acv, e.a.mlp_down_acv, e.a.residual1_acv, n_ctx, c.n_audio_embd);
 
         layer_inp = e.a.residual1_acv;
     }
 
-    ops::layer_norm(layer_inp, e.w.ln_postw, e.w.ln_postb, layer_inp, c.n_audio_ctx, c.n_audio_embd);
+    ops::layer_norm(layer_inp, e.w.ln_postw, e.w.ln_postb, layer_inp, n_ctx, c.n_audio_embd);
 
     return layer_inp;
 }
@@ -613,10 +615,10 @@ size_t get_decoder_acvs_size(const WhisperConfig& c)
 } 
 
 
-float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const WhisperConfig& c, int start_pos)
+float* decoder_forward(int* tokens, int n_text_ctx, Float16* xa, int n_audio_ctx, Decoder& d, const WhisperConfig& c, int start_pos)
 {
-    ops::embed(tokens, d.w.tok_emb, d.a.emb_acv, c.n_vocab, n_ctx, c.n_text_embd, start_pos);
-    ops::add(d.a.emb_acv, d.w.pos_emb, d.a.emb_acv, n_ctx, c.n_text_embd, start_pos);
+    ops::embed(tokens, d.w.tok_emb, d.a.emb_acv, c.n_vocab, n_text_ctx, c.n_text_embd, start_pos);
+    ops::add(d.a.emb_acv, d.w.pos_emb, d.a.emb_acv, n_text_ctx, c.n_text_embd, start_pos);
 
     Float16* layer_inp = d.a.emb_acv;
 
@@ -624,49 +626,49 @@ float* decoder_forward(int* tokens, int n_ctx, Float16* xa, Decoder& d, const Wh
         DecoderAcvsLayer& al = d.a.layers[i];
         DecoderWeightsLayer wl = d.w.layers[i];
 
-        ops::layer_norm(layer_inp, wl.attn_normw, wl.attn_normb, al.attn_norm_acv, n_ctx, c.n_text_embd, start_pos);
+        ops::layer_norm(layer_inp, wl.attn_normw, wl.attn_normb, al.attn_norm_acv, n_text_ctx, c.n_text_embd, start_pos);
 
         // Self Attention
-        ops::linear_2d(al.attn_norm_acv, wl.attn_qw, wl.attn_qb, al.attn_q_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
-        ops::matmul_2d(al.attn_norm_acv, wl.attn_kw, al.attn_k_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
-        ops::linear_2d(al.attn_norm_acv, wl.attn_vw, wl.attn_vb, al.attn_v_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
-        ops::qk_masked(al.attn_q_acv, al.attn_k_acv, al.attn_qk_acv, n_ctx, c.n_text_head, c.n_text_head, c.n_text_dhead, start_pos);
-        ops::attn_mask_inplace(al.attn_qk_acv, c.n_text_head, n_ctx, start_pos);
-        ops::softmax_inplace(al.attn_qk_acv, c.n_text_head, n_ctx, n_ctx, start_pos);
-        ops::qkv(al.attn_qk_acv, al.attn_v_acv, al.attn_qkv_acv, n_ctx, n_ctx, c.n_text_head, c.n_text_head, c.n_text_dhead, start_pos);
-        ops::linear_2d(al.attn_qkv_acv, wl.attn_ow, wl.attn_ob, al.attn_o_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::linear_2d(al.attn_norm_acv, wl.attn_qw, wl.attn_qb, al.attn_q_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::matmul_2d(al.attn_norm_acv, wl.attn_kw, al.attn_k_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::linear_2d(al.attn_norm_acv, wl.attn_vw, wl.attn_vb, al.attn_v_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::qk_masked(al.attn_q_acv, al.attn_k_acv, al.attn_qk_acv, n_text_ctx, c.n_text_head, c.n_text_head, c.n_text_dhead, start_pos);
+        ops::attn_mask_inplace(al.attn_qk_acv, c.n_text_head, n_text_ctx, start_pos);
+        ops::softmax_inplace(al.attn_qk_acv, c.n_text_head, n_text_ctx, n_text_ctx, start_pos);
+        ops::qkv(al.attn_qk_acv, al.attn_v_acv, al.attn_qkv_acv, n_text_ctx, n_text_ctx, c.n_text_head, c.n_text_head, c.n_text_dhead, start_pos);
+        ops::linear_2d(al.attn_qkv_acv, wl.attn_ow, wl.attn_ob, al.attn_o_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
 
-        ops::add(layer_inp, al.attn_o_acv, al.residual0_acv, n_ctx, c.n_text_embd, start_pos);
-        ops::layer_norm(al.residual0_acv, wl.xattn_normw, wl.xattn_normb, al.xattn_norm_acv, n_ctx, c.n_text_embd, start_pos);
+        ops::add(layer_inp, al.attn_o_acv, al.residual0_acv, n_text_ctx, c.n_text_embd, start_pos);
+        ops::layer_norm(al.residual0_acv, wl.xattn_normw, wl.xattn_normb, al.xattn_norm_acv, n_text_ctx, c.n_text_embd, start_pos);
 
         // Cross Attention
-        ops::linear_2d(al.xattn_norm_acv, wl.xattn_qw, wl.xattn_qb, al.xattn_q_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::linear_2d(al.xattn_norm_acv, wl.xattn_qw, wl.xattn_qb, al.xattn_q_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
         // Compute and cache in the first iteration.
         if (start_pos == 0) {
-            ops::matmul_2d(xa, wl.xattn_kw, al.xattn_k_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
-            ops::linear_2d(xa, wl.xattn_vw, wl.xattn_vb, al.xattn_v_acv, c.n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
+            ops::matmul_2d(xa, wl.xattn_kw, al.xattn_k_acv, n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
+            ops::linear_2d(xa, wl.xattn_vw, wl.xattn_vb, al.xattn_v_acv, n_audio_ctx, c.n_audio_embd, c.n_audio_embd);
         }
-        ops::qk(al.xattn_q_acv, al.xattn_k_acv, al.xattn_qk_acv, n_ctx, c.n_audio_ctx, c.n_text_head, c.n_audio_head, c.n_text_dhead, start_pos);
-        ops::softmax_inplace(al.xattn_qk_acv, c.n_text_head, n_ctx, c.n_audio_ctx, start_pos);
+        ops::qk(al.xattn_q_acv, al.xattn_k_acv, al.xattn_qk_acv, n_text_ctx, n_audio_ctx, c.n_text_head, c.n_audio_head, c.n_text_dhead, start_pos);
+        ops::softmax_inplace(al.xattn_qk_acv, c.n_text_head, n_text_ctx, n_audio_ctx, start_pos);
         /// TODO: Transpose v and implement linear qkv.
-        ops::qkv(al.xattn_qk_acv, al.xattn_v_acv, al.attn_qkv_acv, n_ctx, c.n_audio_ctx, c.n_text_head, c.n_audio_head, c.n_text_dhead, start_pos);
-        ops::linear_2d(al.attn_qkv_acv, wl.xattn_ow, wl.xattn_ob, al.xattn_o_acv, n_ctx, c.n_text_embd, c.n_text_embd, start_pos);
+        ops::qkv(al.xattn_qk_acv, al.xattn_v_acv, al.attn_qkv_acv, n_text_ctx, n_audio_ctx, c.n_text_head, c.n_audio_head, c.n_text_dhead, start_pos);
+        ops::linear_2d(al.attn_qkv_acv, wl.xattn_ow, wl.xattn_ob, al.xattn_o_acv, n_text_ctx, c.n_text_embd, c.n_text_embd, start_pos);
 
-        ops::add(al.residual0_acv, al.xattn_o_acv, al.residual1_acv, n_ctx, c.n_text_embd, start_pos);
-        ops::layer_norm(al.residual1_acv, wl.mlp_normw, wl.mlp_normb, al.mlp_norm_acv, n_ctx, c.n_text_embd, start_pos);
+        ops::add(al.residual0_acv, al.xattn_o_acv, al.residual1_acv, n_text_ctx, c.n_text_embd, start_pos);
+        ops::layer_norm(al.residual1_acv, wl.mlp_normw, wl.mlp_normb, al.mlp_norm_acv, n_text_ctx, c.n_text_embd, start_pos);
 
         // MLP
-        ops::linear_2d(al.mlp_norm_acv, wl.mlp_upw, wl.mlp_upb, al.mlp_up_acv, n_ctx, c.n_text_embd, c.n_text_mlp, start_pos);
-        ops::gelu(al.mlp_up_acv, al.mlp_up_acv, n_ctx, c.n_text_mlp, start_pos);
-        ops::linear_2d(al.mlp_up_acv, wl.mlp_downw, wl.mlp_downb, al.mlp_down_acv, n_ctx, c.n_text_mlp, c.n_text_embd, start_pos);
+        ops::linear_2d(al.mlp_norm_acv, wl.mlp_upw, wl.mlp_upb, al.mlp_up_acv, n_text_ctx, c.n_text_embd, c.n_text_mlp, start_pos);
+        ops::gelu(al.mlp_up_acv, al.mlp_up_acv, n_text_ctx, c.n_text_mlp, start_pos);
+        ops::linear_2d(al.mlp_up_acv, wl.mlp_downw, wl.mlp_downb, al.mlp_down_acv, n_text_ctx, c.n_text_mlp, c.n_text_embd, start_pos);
 
-        ops::add(al.residual1_acv, al.mlp_down_acv, al.residual1_acv, n_ctx, c.n_text_embd, start_pos);
+        ops::add(al.residual1_acv, al.mlp_down_acv, al.residual1_acv, n_text_ctx, c.n_text_embd, start_pos);
 
         layer_inp = al.residual1_acv;
     }
 
-    ops::layer_norm(layer_inp, d.w.out_normw, d.w.out_normb, d.a.out_norm_acv, n_ctx, c.n_text_embd, start_pos);
-    ops::lm_head_proj(d.a.out_norm_acv, d.w.tok_emb, d.a.logits, c.n_vocab, n_ctx, c.n_text_embd);
+    ops::layer_norm(layer_inp, d.w.out_normw, d.w.out_normb, d.a.out_norm_acv, n_text_ctx, c.n_text_embd, start_pos);
+    ops::lm_head_proj(d.a.out_norm_acv, d.w.tok_emb, d.a.logits, c.n_vocab, n_text_ctx, c.n_text_embd);
 
     return d.a.logits;
 }
@@ -774,17 +776,17 @@ void suppress_bad_tokens(float* logits, int n_logits)
     }
 }
 
-std::string whisper_decode(Whisper& model, Float16* audio_embed, bool stream = false)
+std::string whisper_decode(Whisper& model, Float16* audio_embed, int n_audio_ctx, bool stream = false)
 {
     std::string prompt;
     std::vector<int> tokens = {model.tokenizer.sot, model.tokenizer.no_timestamps};
     if (stream) {
-        printf("STT Decoded: ");
+        printf("STT: ");
         fflush(stdout);
     }
     for (int i = 0; i < model.config.n_text_ctx/2; i++) {
         const int start_pos = i == 0 ? 0 : tokens.size() - 1;
-        float* logits = decoder_forward(tokens.data(), tokens.size(), audio_embed, model.dec, model.config, start_pos);
+        float* logits = decoder_forward(tokens.data(), tokens.size(), audio_embed, n_audio_ctx, model.dec, model.config, start_pos);
 
         // Vocab size without special tokens, i.e timestamps and tags.
         const int vocab_size = 50257;

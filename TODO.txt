@@ -1,20 +1,16 @@
-NOW:
-Add GPU support.
+NEXT
+- Add tts-model.
+- Implement real-time tts and translation(Only multilingual models).
 
-NEXT:
-Add tts-model.
-
-LATER IDEAS:
+FUTURE:
 
 Optimization:
-    - Optimize encoder (audio chunk?).
     - qkv optimize.
     - flash attn.
     - Add NEON Optimization.
 
 New features:
-    - Implement tts-only (no microphone?, file_input? realtime?).
-    - Add automatic voice detection activity (VAD)
-    - Implement real-time tts and translation(Only multilingual models).
+    - Add automatic voice detection activity (VAD).
     - Submit prompt? Allow for prompt inspection before passing to llm.
     - Add output coloring.
+    - Add GPU support?

@@ -17,6 +17,7 @@ USAGE:
 Optional args. 
 --stt MODEL_SIZE:  The Speech-to-Text model to use. MODEL_SIZE options are (tiny, base, small, medium)[default=base].
 --llm MODEL_SIZE:  The LLM to use to respond to prompt. MODEL_SIZE options are (small, medium, large)[default=medium].
+--time DURATION :  The maximum number of seconds to record your query. DURATION options are (10, 20, 30)[default=20].
 
 Optional flags.
 -testrun: Runs a test in an environment with no microphone, e.g colab with test spectrogram in assets/test_spectrogram.
@@ -37,6 +38,8 @@ int main(int argc, char const *argv[])
     
     const char* llm_model_name = "smollm2-md.bin";
     llm::SmolLM2Type llm_model_type = llm::SmolLM2Type::Medium;
+
+    int record_duration_secs = 10;
 
     bool testrun_no_audio_inp = false;
 
@@ -106,6 +109,25 @@ int main(int argc, char const *argv[])
                 return -1;
             }
         }
+        else if (arg == "--time") {
+            if (argc <= i+1) {
+                fprintf(stderr, "time value is missing.\n");
+                return -1;
+            }
+            int time;
+            try {
+                time = std::stoi(argv[i+1]);
+            } catch (...) {
+                fprintf(stderr, "Invalid time value.\n");
+                return -1;
+            }
+            if (!(time == 10 || time == 20 || time == 30)) {
+                fprintf(stderr, "time must be one of (10, 20, 30). You provided: %d\n", time);
+                return -1;
+            }
+            record_duration_secs = time;
+            i += 1; // skip len param
+        }
         else {
             printf("error: unknown option: %s\n", arg.data());
             return -1;
@@ -125,13 +147,15 @@ int main(int argc, char const *argv[])
         return -1;
     }
 
+    printf("JARVIS\nMax query record duration is %d secs.\n\n", record_duration_secs);
+
     int64_t load_time_ms = 0;
 
     Timer load_timer{&load_time_ms};
     stt::Whisper whisper;
     stt::whisper_init(whisper, stt_model_type, get_model_path(stt_model_name));
 
-    int max_ctx = 512;
+    int max_ctx = 1024;
     llm::SmolLM2 smollm2;
     llm::smollm2_init(smollm2, llm_model_type, max_ctx, get_model_path(llm_model_name));
 
@@ -140,17 +164,18 @@ int main(int argc, char const *argv[])
     if (testrun_no_audio_inp) {
         std::unique_ptr<Float16> spectrogram{new Float16[3000*80]};
         stt::read_test_spectrogram(spectrogram.get());
+        const int n_spec_frames = 1000;
 
         int64_t encoder_time_ms;
         int64_t decoder_time_ms;
         int64_t llm_time_ms;
 
         Timer enc_timer{&encoder_time_ms};
-        Float16* xa = encoder_forward(spectrogram.get(), whisper.enc, whisper.config);
+        Float16* xa = encoder_forward(spectrogram.get(), n_spec_frames, whisper.enc, whisper.config);
         enc_timer.stop();
 
         Timer dec_timer{&decoder_time_ms};
-        std::string prompt = whisper_decode(whisper, xa, /*stream*/true);
+        std::string prompt = whisper_decode(whisper, xa, n_spec_frames, /*stream*/true);
         dec_timer.stop();
  
         // PROMPT Answering.
@@ -170,7 +195,7 @@ int main(int argc, char const *argv[])
     }
     else {
         AudioStream stream;
-        AudioPreprocessor apreproc;
+        AudioPreprocessor apreproc{record_duration_secs};
 
         std::string cmd_input;
         printf("\n");
@@ -189,10 +214,11 @@ int main(int argc, char const *argv[])
 
             // SPEECH-TO-TEXT.
             const Float16* spectrogram = apreproc.get_mel_spectrogram(signal);
-            Float16* xa = encoder_forward(spectrogram, whisper.enc, whisper.config);
+            const int n_spec_frames = apreproc.m_out_frames;
+            Float16* xa = encoder_forward(spectrogram, n_spec_frames, whisper.enc, whisper.config);
             
-            std::string prompt = whisper_decode(whisper, xa);
-            printf("PROMPT: %s\n", prompt.c_str());
+            std::string prompt = whisper_decode(whisper, xa, n_spec_frames, /*stream*/true);
+            // printf("PROMPT: %s\n", prompt.c_str());
 
             // PROMPT Answering.
             printf("\n\n[LLM]: \n\n"); fflush(stdout);

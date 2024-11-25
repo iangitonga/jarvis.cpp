@@ -539,6 +539,7 @@ void conv_1d_stride1(const Float16* inp, const Float16* weight, const Float16* b
 void conv_1d_stride2(const Float16* inp, const Float16* weight, const Float16* bias, Float16* out, int in_frames, int in_channels, int out_channels)
 {
     const int kernel_size = 3;
+    JARVIS_ASSERT(in_frames % 2 == 0);
     const int out_frames = in_frames / 2;
 
     for (int c = 0; c < out_channels; c++) {

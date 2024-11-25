@@ -147,17 +147,31 @@ const float HANN_WINDOW[] = {
     9.8664e-04, 5.5507e-04, 2.4673e-04, 6.1691e-05
 };
 
+static_assert(sizeof(HANN_WINDOW) / sizeof(float) == 400);
+
 // Computes mel-spectrogram of the raw audio signal.
 class AudioPreprocessor {
 public:
-	AudioPreprocessor() {
-		m_stft_out = new float[3000 * 201];
-		m_cos_cache = new float[400 * 201];
-		m_sin_cache = new float[400 * 201];
-		m_padded_sig = new float[16000 * 30 + 400];
-		m_mel_filters = new float[80 * 201];
-		m_mel_spec_f32 = new float[3000* 80];
-		m_mel_spec_f16 = new Float16[3000 * 80];
+	const int m_samplerate = 16000;
+	const int m_nfft = 400;
+	const int m_hop_length = 160;
+	const int m_nmels = 80;
+	const int m_nfreqs = m_nfft / 2 + 1;
+	int m_record_duration;
+	int m_out_frames;
+public:
+	AudioPreprocessor(int record_duration_secs = 10) {
+		JARVIS_ASSERT(record_duration_secs == 10 || record_duration_secs == 20 || record_duration_secs == 30);
+		m_record_duration = record_duration_secs;
+		m_out_frames = (record_duration_secs * m_samplerate) / m_hop_length;
+
+		m_stft_out = new float[m_out_frames * m_nfreqs];
+		m_cos_cache = new float[m_nfft * m_nfreqs];
+		m_sin_cache = new float[m_nfft * m_nfreqs];
+		m_padded_sig = new float[m_samplerate * record_duration_secs + m_nfft];
+		m_mel_filters = new float[m_nmels * m_nfreqs];
+		m_mel_spec_f32 = new float[m_out_frames * m_nfreqs];
+		m_mel_spec_f16 = new Float16[m_out_frames * m_nfreqs];
 
 		// Load mel filters.
 		const char* mel_filters_path = "assets/mel_filters.bin";
@@ -166,13 +180,13 @@ public:
 			fprintf(stderr, "Failed to open: %s\n", mel_filters_path);
 		}
 		
-		fin_mf.read(reinterpret_cast<char*>(m_mel_filters), 80*201*sizeof(float));
+		fin_mf.read(reinterpret_cast<char*>(m_mel_filters), m_nmels*m_nfreqs*sizeof(float));
 
 		// Init the caches.
 		for (int f = 0; f < 201; ++f) {
-			for (int t = 0; t < 400; ++t) {
-				m_cos_cache[f*400 + t] = std::cos( (2.0f * 3.141592653589793f * f * t) / 400.0f );
-				m_sin_cache[f*400 + t] = std::sin( (2.0f * 3.141592653589793f * f * t) / 400.0f );
+			for (int t = 0; t < m_nfft; ++t) {
+				m_cos_cache[f*m_nfft + t] = std::cos( (2.0f * 3.141592653589793f * f * t) / (float)m_nfft );
+				m_sin_cache[f*m_nfft + t] = std::sin( (2.0f * 3.141592653589793f * f * t) / (float)m_nfft );
 			}
 		}
 	}
@@ -188,29 +202,29 @@ public:
 	}
 
 	// signal: Audio recording signal where samplerate=16000. If the signal recording
-	// time is less than 30s, it is padded with zeros. If it is greater than 30 secs,
-	// we only use the last 30 secs samples. The new input has nsamples=(16000*30).
+	// time is less than `nsecs`, it is padded with zeros. If it is greater than  `nsecs`,
+	// we only use the last  `nsecs` samples. The new input has nsamples=(16000*`nsecs`).
 	// We then compute a short-time fourier transform (stft) of the new input to obtain
-	// a spectrogram output of shape (n_samples/hop_length, n_freqs)=(3000, 201).
+	// a spectrogram output of shape (n_samples/hop_length, n_freqs).
 	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
-	// a mel-spectrogram of shape (3000, 80).
-	// Returns a spectrogram of shape (frames, channels)[3000, 80].
+	// a mel-spectrogram of shape (out_frames, n_mels).
+	// Returns a spectrogram of shape (out_frames, n_mels).
 	Float16* get_mel_spectrogram(std::vector<float>& signal) {
 		// PAD SIGNAL
-		const int n_samples = 16000 * 30; // number of samples in 30s where samplerate=16000
+		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
 		if (signal.size() < n_samples) {
 			const int rems = n_samples - signal.size();
 			for (int i = 0; i < rems; i++) {
 				signal.push_back(0);
 			}
 		}
-		// If the number of samples exceed 30 secs, offset the ptr to the start of last 30-secs block.
+		// If the number of samples exceed 30 secs, offset the ptr to the start of last n_secs-secs block.
 		const float* signal_ptr = signal.data() + signal.size() - n_samples;
 
 		const float* spectrogram_f32 = compute_mel_spectrogram(signal_ptr, n_samples);
 		
-		const int out_frames = 3000;
-		const int out_channels = 80;
+		const int out_frames = m_out_frames;
+		const int out_channels = m_nmels;
 		for (int i = 0; i < out_frames; i++) {
 			for (int j = 0; j < out_channels; j++) {
 				m_mel_spec_f16[i * out_channels + j] = fp32_to_fp16(spectrogram_f32[i * out_channels + j]);
@@ -222,25 +236,25 @@ public:
 
 
 private:
-	// Return (n_frames, n_channels) [3000, 80]
+	// Return (n_frames, n_channels)
 	float* compute_mel_spectrogram(const float* sig, int nsamples) {
-		JARVIS_ASSERT(nsamples == 16000*30);
+		JARVIS_ASSERT(nsamples == m_samplerate*m_record_duration);
 
-		const int nfft = 400;
-		const int hop_length = 160;
+		const int nfft = m_nfft;
+		const int hop_length = m_hop_length;
 
-		// Compute magnitudes. shape=[3000, 201]
+		// Compute magnitudes. shape=[out_frames, n_freqs]
 		float* magnitudes = stft(sig, nsamples, nfft, hop_length, HANN_WINDOW);
 
-		// mel_spec = filters @ magnitudes. shape=[80, 3000]
+		// mel_spec = filters @ magnitudes. shape=[out_frames, n_mels]
 		// Stores the result of matrix multiplication between the mel_filters and the
 		// magnitudes. magnitudes is in transposed order so that we have a good cache
 		// locality with respect to both matrices when performing the multiplication.
-		const int n_mel_spec = 80*3000;
+		const int n_mel_spec = m_nmels*m_out_frames;
 
-		const int out_channels = 80;
-		const int nfreqs = 201;
-		const int out_frames = 3000;
+		const int out_channels = m_nmels;
+		const int nfreqs = m_nfreqs;
+		const int out_frames = m_out_frames;
 		for (int i = 0; i < out_channels; ++i) {
 			for (int j = 0; j < out_frames; ++j) {
 				float dotprod = 0.0f;
@@ -331,8 +345,8 @@ private:
 			float sum_real = 0.0f;
 			float sum_imag = 0.0f;
 			for (int t = 0; t < nsamples; ++t) {
-				sum_real += window[t] * sig[t] * m_cos_cache[f * 400 + t];
-				sum_imag += window[t] * sig[t] * -1.0 * m_sin_cache[f * 400 + t];
+				sum_real += window[t] * sig[t] * m_cos_cache[f * m_nfft + t];
+				sum_imag += window[t] * sig[t] * -1.0 * m_sin_cache[f * m_nfft + t];
 			}
 			out[f] = sum_real * sum_real + sum_imag * sum_imag;
 		}
