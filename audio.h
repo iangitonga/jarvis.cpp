@@ -161,7 +161,6 @@ public:
 	int m_out_frames;
 public:
 	AudioPreprocessor(int record_duration_secs = 10) {
-		JARVIS_ASSERT(record_duration_secs == 10 || record_duration_secs == 20 || record_duration_secs == 30);
 		m_record_duration = record_duration_secs;
 		m_out_frames = (record_duration_secs * m_samplerate) / m_hop_length;
 
@@ -201,14 +200,6 @@ public:
 		delete[] m_mel_spec_f16;
 	}
 
-	// signal: Audio recording signal where samplerate=16000. If the signal recording
-	// time is less than `nsecs`, it is padded with zeros. If it is greater than  `nsecs`,
-	// we only use the last  `nsecs` samples. The new input has nsamples=(16000*`nsecs`).
-	// We then compute a short-time fourier transform (stft) of the new input to obtain
-	// a spectrogram output of shape (n_samples/hop_length, n_freqs).
-	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
-	// a mel-spectrogram of shape (out_frames, n_mels).
-	// Returns a spectrogram of shape (out_frames, n_mels).
 	Float16* get_mel_spectrogram(std::vector<float>& signal) {
 		// PAD SIGNAL
 		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
@@ -221,7 +212,23 @@ public:
 		// If the number of samples exceed 30 secs, offset the ptr to the start of last n_secs-secs block.
 		const float* signal_ptr = signal.data() + signal.size() - n_samples;
 
-		const float* spectrogram_f32 = compute_mel_spectrogram(signal_ptr, n_samples);
+		return get_mel_spectrogram(signal.data(), n_samples);
+	}
+
+	// signal: Audio recording signal where samplerate=16000. If the signal recording
+	// time is less than `nsecs`, it is padded with zeros. If it is greater than  `nsecs`,
+	// we only use the last  `nsecs` samples. The new input has nsamples=(16000*`nsecs`).
+	// We then compute a short-time fourier transform (stft) of the new input to obtain
+	// a spectrogram output of shape (n_samples/hop_length, n_freqs).
+	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
+	// a mel-spectrogram of shape (out_frames, n_mels).
+	// Returns a spectrogram of shape (out_frames, n_mels).
+	Float16* get_mel_spectrogram(const float* signal, int inp_samples) {
+		// PAD SIGNAL
+		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
+		JARVIS_ASSERT(n_samples == inp_samples);
+
+		const float* spectrogram_f32 = compute_mel_spectrogram(signal, n_samples);
 		
 		const int out_frames = m_out_frames;
 		const int out_channels = m_nmels;

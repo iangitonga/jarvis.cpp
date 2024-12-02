@@ -17,7 +17,7 @@ USAGE:
 Optional args. 
 --stt MODEL_SIZE:  The Speech-to-Text model to use. MODEL_SIZE options are (tiny, base, small, medium)[default=base].
 --llm MODEL_SIZE:  The LLM to use to respond to prompt. MODEL_SIZE options are (small, medium, large)[default=medium].
---time DURATION :  The maximum number of seconds to record your query. DURATION options are (10, 20, 30)[default=20].
+--time DURATION :  The maximum number of seconds to record your query. DURATION options are (10, 20, 30)[default=10].
 
 Optional flags.
 -testrun: Runs a test in an environment with no microphone, e.g colab with test spectrogram in assets/test_spectrogram.
@@ -78,7 +78,7 @@ int main(int argc, char const *argv[])
                 }
                 i += 1; // fast-forward
             } else {
-                printf("error: llm option is not provided.\n");
+                printf("error: stt option is not provided.\n");
                 printf("%s\n", usage_message);
                 return -1;
             }
@@ -164,7 +164,7 @@ int main(int argc, char const *argv[])
     if (testrun_no_audio_inp) {
         std::unique_ptr<Float16> spectrogram{new Float16[3000*80]};
         stt::read_test_spectrogram(spectrogram.get());
-        const int n_spec_frames = 1000;
+        const int n_spec_frames = record_duration_secs * 100;
 
         int64_t encoder_time_ms;
         int64_t decoder_time_ms;
@@ -185,6 +185,7 @@ int main(int argc, char const *argv[])
         llm_timer.stop();
         printf("\n\n");
 
+        // TODO: Add stt toks/sec.
         const float llm_toks_per_sec = (float)n_llm_tokens / ((float)llm_time_ms/1000.0f);
         printf("timer: llm_toks/sec: %4.2f\n", llm_toks_per_sec);
         printf("timer: encoder_time: %ldms\n", encoder_time_ms);

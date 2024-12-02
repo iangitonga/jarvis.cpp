@@ -827,6 +827,38 @@ std::string whisper_decode(Whisper& model, Float16* audio_embed, int n_audio_ctx
     return prompt;
 }
 
+void whisper_decode_stream(Whisper& model, Float16* audio_embed, int n_audio_ctx)
+{
+    std::vector<int> tokens = {model.tokenizer.sot, model.tokenizer.no_timestamps};
+
+    for (int i = 0; i < model.config.n_text_ctx/2; i++) {
+        const int start_pos = i == 0 ? 0 : tokens.size() - 1;
+        float* logits = decoder_forward(tokens.data(), tokens.size(), audio_embed, n_audio_ctx, model.dec, model.config, start_pos);
+
+        // Vocab size without special tokens, i.e timestamps and tags.
+        const int vocab_size = 50257;
+        suppress_bad_tokens(logits, vocab_size);
+
+        int pred_token = -1;
+        float max_prob = -INFINITY;
+        for (int i = 0; i < vocab_size; i++) {
+            if (logits[i] > max_prob) {
+                max_prob = logits[i];
+                pred_token = i;
+            }
+        }
+
+        if (pred_token == model.tokenizer.eot) {
+            break;
+        }
+
+        std::string decoded = model.tokenizer.decode_token(pred_token);
+        printf("%s", decoded.c_str()); fflush(stdout);
+
+        tokens.push_back(pred_token);
+    }
+}
+
 void read_test_spectrogram(Float16* spectrogram_out)
 {
     FILE* spec_file = fopen("assets/test_spectrogram.bin", "rb");

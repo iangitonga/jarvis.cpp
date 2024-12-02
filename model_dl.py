@@ -11,6 +11,10 @@ MODELS_URLS = {
     "whisper-small.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-small.en.bin",
     "whisper-medium.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/whisper-medium.en.bin",
 
+    "acft-whisper-tiny.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/acft-whisper-tiny.en.bin",
+    "acft-whisper-base.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/acft-whisper-base.en.bin",
+    "acft-whisper-small.en.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/stt/acft-whisper-small.en.bin",
+
     "smollm2-sm.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-sm.bin",
     "smollm2-md.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-md.bin",
     "smollm2-lg.bin": "https://huggingface.co/iangitonga/jarvis.cpp/resolve/main/llm/smollm2-lg.bin"
