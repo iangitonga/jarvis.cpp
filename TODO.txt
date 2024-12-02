@@ -1,8 +1,6 @@
 NEXT:
-- Clean-up code.
-- Implement real-time tts.
-- Add tts-model.
 - Add automatic voice detection activity (VAD).
+- Add tts-model.
 
 FUTURE:
 
@@ -10,7 +8,6 @@ Optimization:
     - qkv optimize.
     - flash attn.
     - Add NEON Optimization
-    - SmolVit
 
 New features:
     - Submit prompt? Allow for prompt inspection before passing to llm.
@@ -18,3 +15,6 @@ New features:
     - Add GPU support?
     - Add translation(Multilingual models)
     - new vs malloc
+
+New project
+- SmolVit
