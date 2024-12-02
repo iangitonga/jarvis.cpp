@@ -6,14 +6,6 @@
 #include "ops.h"
 
 
-
-#define WHISPER_ASSERT(condition)  \
-    if (!(condition)) { \
-        std::fprintf(stderr, "\nLLAMA32_ASSERT: %s:%d: %s.\n", __FILE__, __LINE__, #condition); \
-        std::exit(EXIT_FAILURE); \
-    }
-
-
 namespace stt {
 
 class WhisperTokenizer {
@@ -685,7 +677,7 @@ void load_whisper(const char* fpath, Whisper& m)
 
     const int64_t true_magic_no = 0x6672657073696877; // Hex for ASCII string: whisperf
     int64_t magic_no;
-    WHISPER_ASSERT(fread(&magic_no, sizeof(int64_t), 1, fin) == 1);
+    JARVIS_ASSERT(fread(&magic_no, sizeof(int64_t), 1, fin) == 1);
 
     if (magic_no != true_magic_no) {
         fprintf(stderr, "Magic number: %ld failed to match the expected one: %ld.\n", magic_no, true_magic_no);
@@ -695,24 +687,10 @@ void load_whisper(const char* fpath, Whisper& m)
     const WhisperConfig& c = m.config;
 
     const size_t encoder_nbytes = get_encoder_weights_size(c);
-    WHISPER_ASSERT(fread(m.enc.w.conv1w, encoder_nbytes, 1, fin) == 1);
+    JARVIS_ASSERT(fread(m.enc.w.conv1w, encoder_nbytes, 1, fin) == 1);
 
     const size_t decoder_nbytes = get_decoder_weights_size(c);
-    WHISPER_ASSERT(fread(m.dec.w.tok_emb, decoder_nbytes, 1, fin) == 1);
-}
-
-
-void* whisper_malloc(size_t nbytes) {
-    void* allocated = malloc(nbytes);
-    if (!allocated) {
-        fprintf(stderr, "whisper_alloc: Failed to allocate %ld bytes.", nbytes);
-        exit(-1);
-    }
-    return allocated;
-}
-
-void whisper_mfree(void* memptr) {
-    free(memptr);
+    JARVIS_ASSERT(fread(m.dec.w.tok_emb, decoder_nbytes, 1, fin) == 1);
 }
 
 
@@ -727,7 +705,7 @@ void whisper_alloc(Whisper& model)
 
     size_t total_nbytes = weights_nbytes + acvs_nbytes;
 
-    char* memptr = (char*)whisper_malloc(total_nbytes);
+    char* memptr = (char*)jarvis_malloc(total_nbytes);
     printf("stt_malloc: %ldMB\n", total_nbytes / 1000000);
     char* enc_weights_ptr = memptr;
     char* dec_weights_ptr = enc_weights_ptr + enc_weights_nbytes;
@@ -742,7 +720,7 @@ void whisper_alloc(Whisper& model)
 
 void whisper_free(Whisper& model)
 {
-    whisper_mfree(model.enc.w.conv1w);
+    jarvis_free(model.enc.w.conv1w);
 }
 
 
@@ -868,67 +846,4 @@ void read_test_spectrogram(Float16* spectrogram_out)
 }
 
 }
-
-// int main(int argc, char const *argv[])
-// {
-//     const Config config{};
-//     Whisper model{};
-//     alloc_whisper(model, config);
-//     load_whisper("whisper-tiny.en.bin", model, config);
-
-//     //  [n_frames, in_channels]
-//     float* spectrogram_f32 = new float[80 * 3000];
-//     Float16* spectrogram = new Float16[80 * 3000];
-//     FILE* fin = fopen("spectrogram.bin", "rb");
-//     WHISPER_ASSERT(fin);
-
-//     WHISPER_ASSERT(fread(spectrogram_f32, sizeof(float), 80*3000, fin) == 80*3000);
-
-//     fclose(fin);
-
-//     // 3000, 80
-//     for (int i = 0; i < 80; i++) {
-//         for (int j = 0; j < 3000; j++) {
-//             spectrogram[i + j * 80] = fp32_to_fp16(spectrogram_f32[i * 3000 + j]);
-//         }
-//     }
-    
-//     Float16* xa = encoder_forward(spectrogram, model.enc, config);
-
-
-//     Tokenizer tokenizer;
-
-//     printf("Prediction:\n\n");
-//     std::vector<int> tokens = {tokenizer.sot, tokenizer.no_timestamps};
-//     for (int i = 0; i < config.n_text_ctx/2; i++) {
-//         const int start_pos = i == 0 ? 0 : tokens.size() - 1;
-//         float* logits = decoder_forward(tokens.data(), tokens.size(), xa, model.dec, config, start_pos);
-
-//         int pred_token = -1;
-//         float max_prob = -INFINITY;
-//         for (int i = 0; i < 50257; i++) {
-//             if (logits[i] > max_prob) {
-//                 max_prob = logits[i];
-//                 pred_token = i;
-//             }
-//         }
-
-//         if (pred_token == tokenizer.eot) {
-//             break;
-//         }
-
-//         printf("%s", tokenizer.decode_token(pred_token).c_str());
-//         fflush(stdout);
-
-//         tokens.push_back(pred_token);
-//     }
-//     printf("\n");
-
-//     free_whisper(model, config);
-
-//     printf("Matmul ms: %ld\n", globals::metrics.matmul_ms);
-//     printf("NonMatmul ms: %ld\n", globals::metrics.non_matmul_ms);
-
-//     return 0;
-// }
 

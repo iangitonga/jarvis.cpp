@@ -9,8 +9,8 @@
 #include <regex>
 #include <vector>
 
+#include "common.h"
 #include "ops.h"
-#include "utils.h"
 
 
 
@@ -374,18 +374,6 @@ void alloc_smollm2_acvs(SmolLM2& t, Float16* memptr)
     t.a.logits_acv    = (float*)(memptr); // Always float
 }
 
-void* smollm2_malloc(size_t nbytes) {
-    void* allocated = malloc(nbytes);
-    if (!allocated) {
-        fprintf(stderr, "whisper_alloc: Failed to allocate %ld bytes.", nbytes);
-        exit(-1);
-    }
-    return allocated;
-}
-
-void smollm2_mfree(void* memptr) {
-    free(memptr);
-}
 
 void smollm2_alloc(SmolLM2& model)
 {
@@ -393,7 +381,7 @@ void smollm2_alloc(SmolLM2& model)
     const size_t acvs_nbytes = get_smollm2_acvs_nbytes(model);
     const size_t total_nbytes = weights_nbytes + acvs_nbytes;
 
-    char* memptr = (char*)smollm2_malloc(total_nbytes);
+    char* memptr = (char*)jarvis_malloc(total_nbytes);
     printf("llm_malloc: %ldMB\n", total_nbytes / 1000000);
 
     Float16* weights_ptr = (Float16*)(memptr);
@@ -404,7 +392,7 @@ void smollm2_alloc(SmolLM2& model)
 
 void smollm2_free(SmolLM2& model)
 {
-    smollm2_mfree(model.w.emb_table);
+    jarvis_free(model.w.emb_table);
 }
 
 

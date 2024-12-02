@@ -7,72 +7,7 @@
 #include <fstream>
 #include <vector>
 
-#include "jarvis_types.h"
-
-#define MINIAUDIO_IMPLEMENTATION
-#include "miniaudio.h"
-
-
-void data_callback_capture(ma_device* device, void* output, const void* input, ma_uint32 frame_count)
-{
-    // In capture mode read data from input
-
-    std::vector<float>* signal = (std::vector<float>*)device->pUserData;
-
-    const float* buffer = (float*)input;
-    for (int i = 0; i < frame_count; i++) { 
-        signal->push_back(buffer[i]);
-    }
-    
-    (void)output;
-}
-
-
-class AudioStream {
-public:
-    AudioStream() {
-        m_device_config = ma_device_config_init(ma_device_type_capture);
-        m_device_config.capture.format   = ma_format_f32;
-        m_device_config.capture.channels = 1;
-        m_device_config.sampleRate       = 16000;
-        m_device_config.dataCallback     = data_callback_capture;
-        m_device_config.pUserData        = &m_signal;
-
-        const ma_result result = ma_device_init(NULL, &m_device_config, &m_device);
-        if (result != MA_SUCCESS) {
-            fprintf(stderr, "Failed to initialize capture device.\n");
-            exit(-1);
-        }
-
-        // Reserve 30s n_samples.
-        const int sample_rate = 16000;
-        m_signal.reserve(sample_rate * 30);
-    }
-    ~AudioStream() {
-        ma_device_uninit(&m_device);
-    }
-
-    void start_recording() {
-        m_signal.clear();
-
-        const ma_result result = ma_device_start(&m_device);
-        if (result != MA_SUCCESS) {
-            ma_device_uninit(&m_device);
-            fprintf(stderr, "Failed to start capture device.\n");
-            exit(-1);
-        }
-    }
-
-    std::vector<float>& stop_recording() {
-        ma_device_stop(&m_device);
-        return m_signal;
-    }
-
-private:
-    ma_device_config m_device_config;
-    ma_device m_device;
-    std::vector<float> m_signal;
-};
+#include "common.h"
 
 
 
@@ -164,19 +99,19 @@ public:
 		m_record_duration = record_duration_secs;
 		m_out_frames = (record_duration_secs * m_samplerate) / m_hop_length;
 
-		m_stft_out = new float[m_out_frames * m_nfreqs];
-		m_cos_cache = new float[m_nfft * m_nfreqs];
-		m_sin_cache = new float[m_nfft * m_nfreqs];
-		m_padded_sig = new float[m_samplerate * record_duration_secs + m_nfft];
-		m_mel_filters = new float[m_nmels * m_nfreqs];
-		m_mel_spec_f32 = new float[m_out_frames * m_nfreqs];
-		m_mel_spec_f16 = new Float16[m_out_frames * m_nfreqs];
-
-		// Load mel filters.
+		m_stft_out     = (float*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(float));
+		m_cos_cache    = (float*)jarvis_malloc(m_nfft * m_nfreqs * sizeof(float));
+		m_sin_cache    = (float*)jarvis_malloc(m_nfft * m_nfreqs * sizeof(float));
+		m_padded_sig   = (float*)jarvis_malloc((m_samplerate * record_duration_secs + m_nfft) * sizeof(float));
+		m_mel_filters  = (float*)jarvis_malloc(m_nmels * m_nfreqs * sizeof(float));
+		m_mel_spec_f32 = (float*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(float));
+		m_mel_spec_f16 = (Float16*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(Float16));
+		//)* Load mel filters.
 		const char* mel_filters_path = "assets/mel_filters.bin";
 		std::ifstream fin_mf{mel_filters_path};
 		if (!fin_mf.is_open()) {
 			fprintf(stderr, "Failed to open: %s\n", mel_filters_path);
+			std::exit(-1);
 		}
 		
 		fin_mf.read(reinterpret_cast<char*>(m_mel_filters), m_nmels*m_nfreqs*sizeof(float));
@@ -191,15 +126,23 @@ public:
 	}
 
 	~AudioPreprocessor() {
-		delete[] m_stft_out;
-		delete[] m_cos_cache;
-		delete[] m_sin_cache;
-		delete[] m_padded_sig;
-		delete[] m_mel_filters;
-		delete[] m_mel_spec_f32;
-		delete[] m_mel_spec_f16;
+		jarvis_free(m_stft_out);
+		jarvis_free(m_cos_cache);
+		jarvis_free(m_sin_cache);
+		jarvis_free(m_padded_sig);
+		jarvis_free(m_mel_filters);
+		jarvis_free(m_mel_spec_f32);
+		jarvis_free(m_mel_spec_f16);
 	}
 
+	// signal: Audio recording signal where samplerate=16000. If the signal recording
+	// time is less than `nsecs`, it is padded with zeros. If it is greater than  `nsecs`,
+	// we only use the last  `nsecs` samples. The new input has nsamples=(16000*`nsecs`).
+	// We then compute a short-time fourier transform (stft) of the new input to obtain
+	// a spectrogram output of shape (n_samples/hop_length, n_freqs).
+	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
+	// a mel-spectrogram of shape (out_frames, n_mels).
+	// Returns a spectrogram of shape (out_frames, n_mels).
 	Float16* get_mel_spectrogram(std::vector<float>& signal) {
 		// PAD SIGNAL
 		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
@@ -215,14 +158,6 @@ public:
 		return get_mel_spectrogram(signal.data(), n_samples);
 	}
 
-	// signal: Audio recording signal where samplerate=16000. If the signal recording
-	// time is less than `nsecs`, it is padded with zeros. If it is greater than  `nsecs`,
-	// we only use the last  `nsecs` samples. The new input has nsamples=(16000*`nsecs`).
-	// We then compute a short-time fourier transform (stft) of the new input to obtain
-	// a spectrogram output of shape (n_samples/hop_length, n_freqs).
-	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
-	// a mel-spectrogram of shape (out_frames, n_mels).
-	// Returns a spectrogram of shape (out_frames, n_mels).
 	Float16* get_mel_spectrogram(const float* signal, int inp_samples) {
 		// PAD SIGNAL
 		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000

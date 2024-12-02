@@ -1,9 +1,6 @@
 #include "llm.h"
 
 
-std::string get_model_path(const char* model_name) {
-    return std::string("models/") + model_name;
-}
 
 static const char *usage_message = R"(
 USAGE:
@@ -19,8 +16,6 @@ Optional args.
 int main(int argc, char const *argv[])
 {
     using namespace llm;
-
-    Timer timer{&globals::metrics.total_runtime_ms};
 
     const char* model_name = "smollm2-sm.bin";
     SmolLM2Type model_type = SmolLM2Type::Small;
@@ -95,13 +90,8 @@ int main(int argc, char const *argv[])
         }
     }
 
-#ifdef _WIN32
-    const std::string cmd_download_command = std::string("python model_dl.py ") + model_name;
-#else
-    const std::string cmd_download_command = std::string("python3 model_dl.py ") + model_name;
-#endif
-
-    int res = std::system(cmd_download_command.c_str());
+    const std::string download_command = get_model_download_command(model_name);
+    const int res = std::system(download_command.c_str());
     if (res != 0) {
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
@@ -133,8 +123,6 @@ int main(int argc, char const *argv[])
         std::fflush(stdout);
 
         const int processed_toks = topk_sample(model, prompt, top_k, top_p, temp);
-        timer.stop();
-        print_metrics(globals::metrics, processed_toks);
     }
 
     smollm2_uninit(model);

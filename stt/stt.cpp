@@ -1,11 +1,14 @@
-#include <atomic>
 #include <cstdio>
-#include <thread>
+#include <atomic>
 #include <chrono>
 #include <iostream>
+#include <thread>
 
-#include "stt.h"
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
+
 #include "audio.h"
+#include "stt.h"
 
 /*
 TODO:
@@ -32,13 +35,13 @@ public:
         m_capture_block_size = capture_block_size;
         m_out_block_size = out_block_size;
         m_overlap_frames = overlap_frames;
-        m_data_internal = new float[m_data_capacity];
-        m_data_external = new float[m_out_block_size];
+        m_data_internal = (float*)jarvis_malloc(m_data_capacity * sizeof(float));
+        m_data_external = (float*)jarvis_malloc(m_out_block_size * sizeof(float));
         memset(m_data_external, 0, m_out_block_size*sizeof(float));
     }
     ~AudioBuffer() {
-        delete[] m_data_internal;
-        delete[] m_data_external;
+        jarvis_free(m_data_internal);
+        jarvis_free(m_data_external);
     }
 
     void add_audio_block(const float* buffer, ma_uint32 frame_count) {
@@ -135,7 +138,7 @@ Optional args.
 int main(int argc, char const *argv[])
 {
     stt::WhisperType stt_model_type = stt::WhisperType::Base;
-    std::string stt_model_name = "acft-whisper-base.en.bin";
+    const char* stt_model_name = "acft-whisper-base.en.bin";
     int audio_capture_time = 2;
 
     for (int i = 1; i < argc; i++) {
@@ -196,20 +199,15 @@ int main(int argc, char const *argv[])
         }
     }
 
-#ifdef _WIN32
-    const std::string cmd_download_command = std::string("python model_dl.py ") + stt_model_name;
-#else
-    const std::string cmd_download_command = std::string("python3 model_dl.py ") + stt_model_name;
-#endif
-
-    int res = std::system(cmd_download_command.c_str());
+    const std::string download_command = get_model_download_command(stt_model_name);
+    const int res = std::system(download_command.c_str());
     if (res != 0) {
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
     }
 
     stt::Whisper whisper;
-    stt::whisper_init(whisper, stt_model_type, std::string("models/") + stt_model_name);
+    stt::whisper_init(whisper, stt_model_type, get_model_path(stt_model_name));
 
     const int samplerate = 16000;
     const int buffer_size = 30 * samplerate;

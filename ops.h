@@ -4,8 +4,7 @@
 #include <cstring>
 #include <cmath>
 
-#include "jarvis_types.h"
-#include "utils.h"
+#include "common.h"
 
 
 #if defined(__AVX__)

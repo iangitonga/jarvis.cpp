@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cmath>
+#include <chrono>
 
 #if defined(__AVX__)
 #include <immintrin.h>
@@ -14,6 +15,19 @@
         std::exit(EXIT_FAILURE); \
     }
 
+
+void* jarvis_malloc(size_t nbytes) {
+    void* allocated = malloc(nbytes);
+    if (!allocated) {
+        fprintf(stderr, "jarvis_alloc: Failed to allocate %ld bytes.", nbytes);
+        exit(-1);
+    }
+    return allocated;
+}
+
+void jarvis_free(void* memptr) {
+    free(memptr);
+}
 
 
 typedef uint16_t Float16;
@@ -118,4 +132,55 @@ inline Float16 fp32_to_fp16(float flt) {
 #else
     return fpcvt::fp32_to_fp16(flt);
 #endif
+}
+
+class Timer {
+public:
+    Timer(int64_t* duration_ptr)
+        : m_duration_ptr{duration_ptr},
+          m_start_time{std::chrono::high_resolution_clock::now()}
+    { 
+    }
+    ~Timer() { stop(); }
+
+    void stop() {
+        if (m_stopped) {
+            return;
+        }
+        auto end_time = std::chrono::high_resolution_clock::now();
+        int64_t start = std::chrono::time_point_cast<std::chrono::milliseconds>(m_start_time).time_since_epoch().count();
+        int64_t end = std::chrono::time_point_cast<std::chrono::milliseconds>(end_time).time_since_epoch().count();
+        int64_t duration = end - start;
+        *m_duration_ptr += duration;
+        m_stopped = true;
+    }
+
+private:
+    int64_t* m_duration_ptr;
+    std::chrono::time_point<std::chrono::high_resolution_clock> m_start_time;
+    bool m_stopped = false;
+};
+
+
+
+std::string get_model_download_command(const std::string& model_name0, const std::string& model_name1) {
+#ifdef _WIN32
+    std::string download_command = std::string("python model_dl.py ") + model_name0 + " " + model_name1;
+#else
+    std::string download_command = std::string("python3 model_dl.py ") + model_name0 + " " + model_name1;
+#endif
+    return download_command;
+}
+
+std::string get_model_download_command(const std::string& model_name) {
+#ifdef _WIN32
+    const std::string download_command = std::string("python model_dl.py ") + model_name;
+#else
+    const std::string download_command = std::string("python3 model_dl.py ") + model_name;
+#endif
+    return download_command;
+}
+
+std::string get_model_path(const char* model_name) {
+    return std::string("models/") + model_name;
 }

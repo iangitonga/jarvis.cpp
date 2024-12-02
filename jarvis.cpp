@@ -1,12 +1,77 @@
 #include <cstdlib>
 #include <cstdio>
-#include <vector>
 #include <iostream>
 #include <memory>
+#include <vector>
+
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
 
 #include "audio.h"
-#include "stt/stt.h"
 #include "llm/llm.h"
+#include "stt/stt.h"
+
+
+void audio_callback_capture(ma_device* device, void* output, const void* input, ma_uint32 frame_count)
+{
+    // In capture mode read data from input
+
+    std::vector<float>* signal = (std::vector<float>*)device->pUserData;
+
+    const float* buffer = (float*)input;
+    for (int i = 0; i < frame_count; i++) { 
+        signal->push_back(buffer[i]);
+    }
+    
+    (void)output;
+}
+
+
+class AudioStream {
+public:
+    AudioStream() {
+        m_device_config = ma_device_config_init(ma_device_type_capture);
+        m_device_config.capture.format   = ma_format_f32;
+        m_device_config.capture.channels = 1;
+        m_device_config.sampleRate       = 16000;
+        m_device_config.dataCallback     = audio_callback_capture;
+        m_device_config.pUserData        = &m_signal;
+
+        const ma_result result = ma_device_init(NULL, &m_device_config, &m_device);
+        if (result != MA_SUCCESS) {
+            fprintf(stderr, "Failed to initialize capture device.\n");
+            exit(-1);
+        }
+
+        // Reserve 30s n_samples.
+        const int sample_rate = 16000;
+        m_signal.reserve(sample_rate * 30);
+    }
+    ~AudioStream() {
+        ma_device_uninit(&m_device);
+    }
+
+    void start_recording() {
+        m_signal.clear();
+
+        const ma_result result = ma_device_start(&m_device);
+        if (result != MA_SUCCESS) {
+            ma_device_uninit(&m_device);
+            fprintf(stderr, "Failed to start capture device.\n");
+            exit(-1);
+        }
+    }
+
+    std::vector<float>& stop_recording() {
+        ma_device_stop(&m_device);
+        return m_signal;
+    }
+
+private:
+    ma_device_config m_device_config;
+    ma_device m_device;
+    std::vector<float> m_signal;
+};
 
 
 
@@ -26,10 +91,6 @@ Optional flags.
 
 
 // TODO: Add memory footprint and metrics.
-
-std::string get_model_path(const char* model_name) {
-    return std::string("models/") + model_name;
-}
 
 int main(int argc, char const *argv[])
 {
@@ -134,14 +195,8 @@ int main(int argc, char const *argv[])
         }
     }
 
-    
-#ifdef _WIN32
-    const std::string cmd_download_command = std::string("python model_dl.py ") + stt_model_name + " " + llm_model_name;
-#else
-    const std::string cmd_download_command = std::string("python3 model_dl.py ") + stt_model_name + " " + llm_model_name;
-#endif
-
-    int res = std::system(cmd_download_command.c_str());
+    const std::string download_command = get_model_download_command(stt_model_name, llm_model_name);
+    const int res = std::system(download_command.c_str());
     if (res != 0) {
         fprintf(stderr, "Error: Failed to download the models. Check your network connectivity.\n");
         return -1;
