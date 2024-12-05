@@ -1,5 +1,6 @@
 NEXT:
 - Add automatic voice detection activity (VAD).
+  - Perform refactorings, improve VAD
 - Add tts-model.
 
 FUTURE:

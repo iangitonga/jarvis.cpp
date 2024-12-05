@@ -10,6 +10,136 @@
 #include "common.h"
 
 
+// Implements simple energy-based thresholding VAD. Fast but not robust.
+class VoiceActivityDetector {
+public:
+    VoiceActivityDetector(int n_inp_frames, float speech_threshold = -90.0f) {
+		speech_threshold_ = speech_threshold;
+		n_inp_frames_ = n_inp_frames;
+		n_out_frames_ =  ((n_inp_frames_ - n_fft_) / fft_hop_length_) + 1;
+		fft_out_ = jarvis_malloc_f32(n_out_frames_ * n_freqs_);
+		fft_energy_ = jarvis_malloc_f32(n_out_frames_);
+		sin_cache_ = jarvis_malloc_f32(n_fft_ * n_freqs_);
+		cos_cache_ = jarvis_malloc_f32(n_fft_ * n_freqs_);
+
+		for (int f = 0; f < n_freqs_; ++f) {
+			for (int t = 0; t < n_fft_; ++t) {
+				cos_cache_[f * n_fft_ + t] = std::cos((2.0f * 3.141592653589793f * f * t) / static_cast<float>(n_fft_));
+				sin_cache_[f * n_fft_ + t] = std::sin((2.0f * 3.141592653589793f * f * t) / static_cast<float>(n_fft_));
+			}
+		}
+    }
+	~VoiceActivityDetector() {
+		jarvis_free(fft_out_);
+		jarvis_free(fft_energy_);
+		jarvis_free(sin_cache_);
+		jarvis_free(cos_cache_);
+	}
+
+	bool signal_has_speech(const float* sig) {
+		float* vad_out = vad(sig);
+
+		// float min = INFINITY;
+		// float max = -INFINITY;
+		float mean_energy = 0.0f;
+		for (int i = 0; i < n_out_frames_; i++) {
+			float val = vad_out[i];
+			mean_energy += val;
+			// if (val < min) { min = val; }
+			// if (val > max) {max = val;}
+		}
+		mean_energy = mean_energy / n_out_frames_;
+		// printf("(min=%f, max=%f, mean=%f)\n", min, max, mean_energy);
+
+		// for (int i = 0; i < n_out_frames_; i++) {
+		// 	const float frame_energy = vad_out[i];
+		// 	if (frame_energy > speech_threshold_) {
+		// 		return true;
+		// 	}
+		// }
+		// return false;
+		if (mean_energy > speech_threshold_) {
+			return true;
+		}
+		return false;
+	}
+
+	float* vad(const float* sig) {
+		// Compute frequency magnitudes: abs(rfft(x))**2
+		for (int i = 0; i < n_out_frames_; ++i) {
+			for (int f = 0; f < n_freqs_; ++f) {
+				float sum_real = 0.0f;
+				float sum_imag = 0.0f;
+				for (int t = 0; t < n_fft_; ++t) {
+					sum_real += sig[i * fft_hop_length_ + t] * cos_cache_[f * n_fft_ + t];
+					sum_imag += sig[i * fft_hop_length_ + t] * -1.0 * sin_cache_[f * n_fft_ + t];
+				}
+				fft_out_[i * n_freqs_ + f] = sum_real * sum_real + sum_imag * sum_imag;
+			}
+		}
+
+		// COMPUTE ENERGY
+		for (int i = 0; i < n_out_frames_; i++){
+			float sum = 0.0f;
+			for (int j = 0; j < n_freqs_; j++){
+				sum += fft_out_[i * n_freqs_ + j];
+			}
+			fft_energy_[i] = sum / (n_out_frames_*n_out_frames_);
+		}
+		
+		// normalize energy to 0 dB then filter
+		for (int i = 0; i < n_out_frames_; i++) {
+			fft_energy_[i] = 10.0f * log10f(fft_energy_[i] / energy_threshold_);
+		}
+
+		const int n_filter = 5;
+		const int pad_size = 4;
+		float sorted[n_filter];
+		for (int i = 0; i < n_out_frames_-pad_size; i++) {
+			// sort the 5
+			// find medium, middle guy
+			memcpy(sorted, fft_energy_ + i, n_filter*sizeof(float));
+			sort_array(sorted, n_filter);
+			const float median = sorted[2];
+			fft_energy_[i] = median;
+		}
+		
+		// speech_frames = where(fft_energy > speech_threshold)
+		return fft_energy_;
+	}
+
+private:
+	// fast for small arrays (n=5).
+	void sort_array(float* inp, int size) {
+		for (int i = 1; i < size; i++) {
+			for (int j = i; j >= 1; j--) {
+				const float cur_val = inp[j];
+				const float prev_val = inp[j - 1];
+				if (prev_val > cur_val) {
+					inp[j] = prev_val;  
+					inp[j-1] = cur_val;
+				}
+			}
+		}
+	}
+private:
+    const int n_fft_ = 400; // 25ms
+    const int fft_hop_length_ = 400;
+    const int n_freqs_ = n_fft_ / 2 + 1;
+    // size of the median filter window.
+    const int n_filter_ = 5;
+    // Energy value characterizing the silence to speech energy ratio.
+    const float energy_threshold_ = 1e7f;
+    // Threshold where energy above is considered speech and energy below is silence.
+    float speech_threshold_;
+	int n_inp_frames_;
+	int n_out_frames_;
+    float* fft_out_;
+    float* fft_energy_;
+    float* sin_cache_;
+    float* cos_cache_;
+};
+
 
 // Hanning window as computed by pytorch. size=400, mem=1.6Kb.
 const float HANN_WINDOW[] = {
@@ -99,13 +229,13 @@ public:
 		m_record_duration = record_duration_secs;
 		m_out_frames = (record_duration_secs * m_samplerate) / m_hop_length;
 
-		m_stft_out     = (float*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(float));
-		m_cos_cache    = (float*)jarvis_malloc(m_nfft * m_nfreqs * sizeof(float));
-		m_sin_cache    = (float*)jarvis_malloc(m_nfft * m_nfreqs * sizeof(float));
-		m_padded_sig   = (float*)jarvis_malloc((m_samplerate * record_duration_secs + m_nfft) * sizeof(float));
-		m_mel_filters  = (float*)jarvis_malloc(m_nmels * m_nfreqs * sizeof(float));
-		m_mel_spec_f32 = (float*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(float));
-		m_mel_spec_f16 = (Float16*)jarvis_malloc(m_out_frames * m_nfreqs * sizeof(Float16));
+		m_stft_out     = jarvis_malloc_f32(m_out_frames * m_nfreqs);
+		m_cos_cache    = jarvis_malloc_f32(m_nfft * m_nfreqs);
+		m_sin_cache    = jarvis_malloc_f32(m_nfft * m_nfreqs);
+		m_padded_sig   = jarvis_malloc_f32(m_samplerate * record_duration_secs + m_nfft);
+		m_mel_filters  = jarvis_malloc_f32(m_nmels * m_nfreqs);
+		m_mel_spec_f32 = jarvis_malloc_f32(m_out_frames * m_nfreqs);
+		m_mel_spec_f16 = jarvis_malloc_f16(m_out_frames * m_nfreqs);
 		//)* Load mel filters.
 		const char* mel_filters_path = "assets/mel_filters.bin";
 		std::ifstream fin_mf{mel_filters_path};

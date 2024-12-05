@@ -16,6 +16,9 @@
     }
 
 
+typedef uint16_t Float16;
+
+
 void* jarvis_malloc(size_t nbytes) {
     void* allocated = malloc(nbytes);
     if (!allocated) {
@@ -29,8 +32,13 @@ void jarvis_free(void* memptr) {
     free(memptr);
 }
 
+Float16* jarvis_malloc_f16(size_t size) {
+    return reinterpret_cast<Float16*>(jarvis_malloc(size * sizeof(Float16)));
+}
 
-typedef uint16_t Float16;
+float* jarvis_malloc_f32(size_t size) {
+    return reinterpret_cast<float*>(jarvis_malloc(size * sizeof(float)));
+}
 
 
 namespace fpcvt {
