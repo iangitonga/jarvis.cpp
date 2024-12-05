@@ -251,7 +251,7 @@ int main(int argc, char const *argv[])
     }
     else {
         AudioStream stream;
-        AudioPreprocessor apreproc{record_duration_secs};
+        AudioPreprocessor apreproc;
 
         std::string cmd_input;
         printf("\n");
@@ -261,6 +261,7 @@ int main(int argc, char const *argv[])
             if (cmd_input == "q")
                 break;
 
+            // TODO: Add recorder timeout.
             stream.start_recording();
             printf("\nRecording. Enter to stop the recording ...");
             std::cin.get();
@@ -268,9 +269,17 @@ int main(int argc, char const *argv[])
             std::vector<float>& signal = stream.stop_recording();
             printf("\nRecording complete. Converting Audio...\n\n");
 
+            // pad to record_duration_secs. audio less than 10 secs is not decoded without severe repetition.
+            if (signal.size() < kSampleRate*record_duration_secs) {
+                const int deficit = kSampleRate*record_duration_secs - signal.size();
+                for (int i = 0; i < deficit; i++) {
+                    signal.push_back(0);
+                }
+            }
+
             // SPEECH-TO-TEXT.
-            const Float16* spectrogram = apreproc.get_mel_spectrogram(signal);
-            const int n_spec_frames = apreproc.m_out_frames;
+            int n_spec_frames;
+            const Float16* spectrogram = apreproc.get_mel_spectrogram(signal, &n_spec_frames);
             Float16* xa = encoder_forward(spectrogram, n_spec_frames, whisper.enc, whisper.config);
             
             std::string prompt = whisper_decode(whisper, xa, n_spec_frames, /*stream*/true);

@@ -10,15 +10,28 @@
 #include "common.h"
 
 
+/*
+audio.h [const k = 0]
+audio.cpp [global::k]
+jarvis.cpp [global::k]
+maximum audio block/chunk lenth in seconds
+during linking [error: multiple definitions of symbol k]
+*/
+
+inline constexpr int kSampleRate = 16000;
+// Maximum length (in secs) of an audio chunk.
+inline constexpr int kMaxChunkLength = 30; // in secs
+inline constexpr int kMaxChunkFrames = kMaxChunkLength*kSampleRate;
+
+
 // Implements simple energy-based thresholding VAD. Fast but not robust.
 class VoiceActivityDetector {
 public:
-    VoiceActivityDetector(int n_inp_frames, float speech_threshold = -90.0f) {
+    VoiceActivityDetector(float speech_threshold = -90.0f) {
 		speech_threshold_ = speech_threshold;
-		n_inp_frames_ = n_inp_frames;
-		n_out_frames_ =  ((n_inp_frames_ - n_fft_) / fft_hop_length_) + 1;
-		fft_out_ = jarvis_malloc_f32(n_out_frames_ * n_freqs_);
-		fft_energy_ = jarvis_malloc_f32(n_out_frames_);
+		const int max_out_frames = get_num_out_frames(kMaxChunkFrames);
+		fft_out_ = jarvis_malloc_f32(max_out_frames * n_freqs_);
+		fft_energy_ = jarvis_malloc_f32(max_out_frames);
 		sin_cache_ = jarvis_malloc_f32(n_fft_ * n_freqs_);
 		cos_cache_ = jarvis_malloc_f32(n_fft_ * n_freqs_);
 
@@ -36,22 +49,25 @@ public:
 		jarvis_free(cos_cache_);
 	}
 
-	bool signal_has_speech(const float* sig) {
-		float* vad_out = vad(sig);
+	bool signal_has_speech(const float* sig, int n_sig_frames) {
+		JARVIS_ASSERT(n_sig_frames < kMaxChunkFrames);
 
+		float* vad_out = spectral_vad(sig, n_sig_frames);
+
+		const int n_out_frames = get_num_out_frames(n_sig_frames);
 		// float min = INFINITY;
 		// float max = -INFINITY;
 		float mean_energy = 0.0f;
-		for (int i = 0; i < n_out_frames_; i++) {
+		for (int i = 0; i < n_out_frames; i++) {
 			float val = vad_out[i];
 			mean_energy += val;
 			// if (val < min) { min = val; }
 			// if (val > max) {max = val;}
 		}
-		mean_energy = mean_energy / n_out_frames_;
+		mean_energy = mean_energy / n_out_frames;
 		// printf("(min=%f, max=%f, mean=%f)\n", min, max, mean_energy);
 
-		// for (int i = 0; i < n_out_frames_; i++) {
+		// for (int i = 0; i < n_out_frames; i++) {
 		// 	const float frame_energy = vad_out[i];
 		// 	if (frame_energy > speech_threshold_) {
 		// 		return true;
@@ -64,9 +80,11 @@ public:
 		return false;
 	}
 
-	float* vad(const float* sig) {
+	float* spectral_vad(const float* sig, int n_sig_frames) {
+		const int n_out_frames = get_num_out_frames(n_sig_frames);
+
 		// Compute frequency magnitudes: abs(rfft(x))**2
-		for (int i = 0; i < n_out_frames_; ++i) {
+		for (int i = 0; i < n_out_frames; ++i) {
 			for (int f = 0; f < n_freqs_; ++f) {
 				float sum_real = 0.0f;
 				float sum_imag = 0.0f;
@@ -79,23 +97,23 @@ public:
 		}
 
 		// COMPUTE ENERGY
-		for (int i = 0; i < n_out_frames_; i++){
+		for (int i = 0; i < n_out_frames; i++){
 			float sum = 0.0f;
 			for (int j = 0; j < n_freqs_; j++){
 				sum += fft_out_[i * n_freqs_ + j];
 			}
-			fft_energy_[i] = sum / (n_out_frames_*n_out_frames_);
+			fft_energy_[i] = sum / (n_out_frames*n_out_frames);
 		}
 		
 		// normalize energy to 0 dB then filter
-		for (int i = 0; i < n_out_frames_; i++) {
+		for (int i = 0; i < n_out_frames; i++) {
 			fft_energy_[i] = 10.0f * log10f(fft_energy_[i] / energy_threshold_);
 		}
 
 		const int n_filter = 5;
 		const int pad_size = 4;
 		float sorted[n_filter];
-		for (int i = 0; i < n_out_frames_-pad_size; i++) {
+		for (int i = 0; i < n_out_frames-pad_size; i++) {
 			// sort the 5
 			// find medium, middle guy
 			memcpy(sorted, fft_energy_ + i, n_filter*sizeof(float));
@@ -109,6 +127,11 @@ public:
 	}
 
 private:
+	int get_num_out_frames(int n_in_frames) {
+		// not-padded.
+		return ((n_in_frames - n_fft_) / fft_hop_length_) + 1;
+	}
+
 	// fast for small arrays (n=5).
 	void sort_array(float* inp, int size) {
 		for (int i = 1; i < size; i++) {
@@ -132,8 +155,6 @@ private:
     const float energy_threshold_ = 1e7f;
     // Threshold where energy above is considered speech and energy below is silence.
     float speech_threshold_;
-	int n_inp_frames_;
-	int n_out_frames_;
     float* fft_out_;
     float* fft_energy_;
     float* sin_cache_;
@@ -217,26 +238,17 @@ static_assert(sizeof(HANN_WINDOW) / sizeof(float) == 400);
 // Computes mel-spectrogram of the raw audio signal.
 class AudioPreprocessor {
 public:
-	const int m_samplerate = 16000;
-	const int m_nfft = 400;
-	const int m_hop_length = 160;
-	const int m_nmels = 80;
-	const int m_nfreqs = m_nfft / 2 + 1;
-	int m_record_duration;
-	int m_out_frames;
-public:
-	AudioPreprocessor(int record_duration_secs = 10) {
-		m_record_duration = record_duration_secs;
-		m_out_frames = (record_duration_secs * m_samplerate) / m_hop_length;
+	AudioPreprocessor() {
+		const int max_out_frames = kMaxChunkFrames / hop_length_;
 
-		m_stft_out     = jarvis_malloc_f32(m_out_frames * m_nfreqs);
-		m_cos_cache    = jarvis_malloc_f32(m_nfft * m_nfreqs);
-		m_sin_cache    = jarvis_malloc_f32(m_nfft * m_nfreqs);
-		m_padded_sig   = jarvis_malloc_f32(m_samplerate * record_duration_secs + m_nfft);
-		m_mel_filters  = jarvis_malloc_f32(m_nmels * m_nfreqs);
-		m_mel_spec_f32 = jarvis_malloc_f32(m_out_frames * m_nfreqs);
-		m_mel_spec_f16 = jarvis_malloc_f16(m_out_frames * m_nfreqs);
-		//)* Load mel filters.
+		stft_out_     = jarvis_malloc_f32(max_out_frames * n_freqs_);
+		cos_cache_    = jarvis_malloc_f32(n_fft_ * n_freqs_);
+		sin_cache_    = jarvis_malloc_f32(n_fft_ * n_freqs_);
+		padded_sig_   = jarvis_malloc_f32(kMaxChunkFrames + n_fft_);
+		mel_filters_  = jarvis_malloc_f32(n_mels_ * n_freqs_);
+		mel_spec_f32_ = jarvis_malloc_f32(max_out_frames * n_freqs_);
+		mel_spec_f16_ = jarvis_malloc_f16(max_out_frames * n_freqs_);
+		// Load mel filters.
 		const char* mel_filters_path = "assets/mel_filters.bin";
 		std::ifstream fin_mf{mel_filters_path};
 		if (!fin_mf.is_open()) {
@@ -244,25 +256,25 @@ public:
 			std::exit(-1);
 		}
 		
-		fin_mf.read(reinterpret_cast<char*>(m_mel_filters), m_nmels*m_nfreqs*sizeof(float));
+		fin_mf.read(reinterpret_cast<char*>(mel_filters_), n_mels_*n_freqs_*sizeof(float));
 
 		// Init the caches.
 		for (int f = 0; f < 201; ++f) {
-			for (int t = 0; t < m_nfft; ++t) {
-				m_cos_cache[f*m_nfft + t] = std::cos( (2.0f * 3.141592653589793f * f * t) / (float)m_nfft );
-				m_sin_cache[f*m_nfft + t] = std::sin( (2.0f * 3.141592653589793f * f * t) / (float)m_nfft );
+			for (int t = 0; t < n_fft_; ++t) {
+				cos_cache_[f * n_fft_ + t] = std::cos( (2.0f * 3.141592653589793f * f * t) / (float)n_fft_);
+				sin_cache_[f * n_fft_ + t] = std::sin( (2.0f * 3.141592653589793f * f * t) / (float)n_fft_);
 			}
 		}
 	}
 
 	~AudioPreprocessor() {
-		jarvis_free(m_stft_out);
-		jarvis_free(m_cos_cache);
-		jarvis_free(m_sin_cache);
-		jarvis_free(m_padded_sig);
-		jarvis_free(m_mel_filters);
-		jarvis_free(m_mel_spec_f32);
-		jarvis_free(m_mel_spec_f16);
+		jarvis_free(stft_out_);
+		jarvis_free(cos_cache_);
+		jarvis_free(sin_cache_);
+		jarvis_free(padded_sig_);
+		jarvis_free(mel_filters_);
+		jarvis_free(mel_spec_f32_);
+		jarvis_free(mel_spec_f16_);
 	}
 
 	// signal: Audio recording signal where samplerate=16000. If the signal recording
@@ -273,97 +285,94 @@ public:
 	// We then perform a matmul between the spectrogram and a mel-filterbank to obtain
 	// a mel-spectrogram of shape (out_frames, n_mels).
 	// Returns a spectrogram of shape (out_frames, n_mels).
-	Float16* get_mel_spectrogram(std::vector<float>& signal) {
+	Float16* get_mel_spectrogram(std::vector<float>& sig, int* n_out_frames) {
 		// PAD SIGNAL
-		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
-		if (signal.size() < n_samples) {
-			const int rems = n_samples - signal.size();
-			for (int i = 0; i < rems; i++) {
-				signal.push_back(0);
-			}
+		const int n_samples = sig.size();
+		float* signal_ptr = sig.data();
+		if (n_samples > kMaxChunkFrames) {
+			// If the number of samples exceed 30 secs, offset the ptr to the start of last n_secs-secs block.
+			signal_ptr = sig.data() + n_samples - kMaxChunkFrames;
 		}
-		// If the number of samples exceed 30 secs, offset the ptr to the start of last n_secs-secs block.
-		const float* signal_ptr = signal.data() + signal.size() - n_samples;
 
-		return get_mel_spectrogram(signal.data(), n_samples);
+		return get_mel_spectrogram(sig.data(), n_samples, n_out_frames);
 	}
 
-	Float16* get_mel_spectrogram(const float* signal, int inp_samples) {
+	Float16* get_mel_spectrogram(const float* sig, int n_samples, int* n_out_frames) {
 		// PAD SIGNAL
-		const int n_samples = m_samplerate * m_record_duration; // number of samples in 30s where samplerate=16000
-		JARVIS_ASSERT(n_samples == inp_samples);
+		JARVIS_ASSERT(n_samples <= kMaxChunkFrames);
 
-		const float* spectrogram_f32 = compute_mel_spectrogram(signal, n_samples);
-		
-		const int out_frames = m_out_frames;
-		const int out_channels = m_nmels;
+		const float* spectrogram_f32 = compute_mel_spectrogram(sig, n_samples);
+
+		const int out_frames = n_samples / hop_length_;
+		*n_out_frames = out_frames;
+		const int out_channels = n_mels_;
 		for (int i = 0; i < out_frames; i++) {
 			for (int j = 0; j < out_channels; j++) {
-				m_mel_spec_f16[i * out_channels + j] = fp32_to_fp16(spectrogram_f32[i * out_channels + j]);
+				mel_spec_f16_[i * out_channels + j] = fp32_to_fp16(spectrogram_f32[i * out_channels + j]);
 			}
 		}
 
-		return m_mel_spec_f16;
+		return mel_spec_f16_;
 	}
 
 
 private:
 	// Return (n_frames, n_channels)
-	float* compute_mel_spectrogram(const float* sig, int nsamples) {
-		JARVIS_ASSERT(nsamples == m_samplerate*m_record_duration);
+	float* compute_mel_spectrogram(const float* sig, int n_samples) {
+		JARVIS_ASSERT(n_samples <= kMaxChunkFrames);
 
-		const int nfft = m_nfft;
-		const int hop_length = m_hop_length;
+		const int n_fft = n_fft_;
+		const int hop_length = hop_length_;
 
 		// Compute magnitudes. shape=[out_frames, n_freqs]
-		float* magnitudes = stft(sig, nsamples, nfft, hop_length, HANN_WINDOW);
+		float* magnitudes = stft(sig, n_samples, n_fft, hop_length, HANN_WINDOW);
 
 		// mel_spec = filters @ magnitudes. shape=[out_frames, n_mels]
 		// Stores the result of matrix multiplication between the mel_filters and the
 		// magnitudes. magnitudes is in transposed order so that we have a good cache
 		// locality with respect to both matrices when performing the multiplication.
-		const int n_mel_spec = m_nmels*m_out_frames;
+		const int out_channels = n_mels_;
+		const int nfreqs = n_freqs_;
+		const int n_out_frames = n_samples / hop_length;
 
-		const int out_channels = m_nmels;
-		const int nfreqs = m_nfreqs;
-		const int out_frames = m_out_frames;
 		for (int i = 0; i < out_channels; ++i) {
-			for (int j = 0; j < out_frames; ++j) {
+			for (int j = 0; j < n_out_frames; ++j) {
 				float dotprod = 0.0f;
 				for (int k = 0; k < nfreqs; ++k) {
-					dotprod += m_mel_filters[i * nfreqs + k] * magnitudes[j * nfreqs + k];
+					dotprod += mel_filters_[i * nfreqs + k] * magnitudes[j * nfreqs + k];
 				}
-				m_mel_spec_f32[i + j * out_channels] = dotprod;
+				mel_spec_f32_[i + j * out_channels] = dotprod;
 			}
 		}
 
+		const int n_mel_spec = n_mels_*n_out_frames;
 		// log_spec = torch.clamp(mel_spec, min=1e-10).log10()
 		for (int i = 0; i < n_mel_spec; ++i) {
-			if (m_mel_spec_f32[i] < 1e-10) {
-				m_mel_spec_f32[i] = 1e-10;
+			if (mel_spec_f32_[i] < 1e-10) {
+				mel_spec_f32_[i] = 1e-10;
 			}
-			m_mel_spec_f32[i] = std::log10(m_mel_spec_f32[i]);
+			mel_spec_f32_[i] = std::log10(mel_spec_f32_[i]);
 		}
 
 		// torch.maximum(log_spec, log_spec.max() - 8.0)
 		float mel_spec_max = -std::numeric_limits<float>::infinity();
 		for (int i = 0; i < n_mel_spec; ++i) {
-			if (m_mel_spec_f32[i] > mel_spec_max) {
-				mel_spec_max = m_mel_spec_f32[i];
+			if (mel_spec_f32_[i] > mel_spec_max) {
+				mel_spec_max = mel_spec_f32_[i];
 			}
 		}
 		for (int i = 0; i < n_mel_spec; ++i) {
-			if (m_mel_spec_f32[i] < mel_spec_max - 8.0) {
-				m_mel_spec_f32[i] = mel_spec_max - 8.0;
+			if (mel_spec_f32_[i] < mel_spec_max - 8.0) {
+				mel_spec_f32_[i] = mel_spec_max - 8.0;
 			}
 		}
 
 		// (log_spec + 4.0) / 4.0
 		for (int i = 0; i < n_mel_spec; ++i) {
-			m_mel_spec_f32[i] = (m_mel_spec_f32[i] + 4.0f) * 1.0f/4.0f;
+			mel_spec_f32_[i] = (mel_spec_f32_[i] + 4.0f) * 1.0f/4.0f;
 		}
 
-		return m_mel_spec_f32;
+		return mel_spec_f32_;
 	}
 
 	float* stft(const float* sig, int nsamples, int nfft, int hop_length, const float* window)
@@ -378,11 +387,11 @@ private:
 		// COMPUTE_STFT
 		for (int i = 0; i < nframes; ++i) {
 			float* frame_sig = padded_sig + i * hop_length;
-			float* out_sig = m_stft_out + nfreqs * i;
+			float* out_sig = stft_out_ + nfreqs * i;
 			fourier_transform(frame_sig, nfft, window, out_sig);
 		}
 
-		return m_stft_out;
+		return stft_out_;
 	}
 
 	// Pad array by pad_size both on the right and left by reflecting. E.g for pad_size=3
@@ -390,22 +399,22 @@ private:
     // output: [4, 3, 2, 1, 2, 3, 4, 5, 6, 5, 4, 3]
 	float* pad_sig(const float* sig, int nsamples, int pad_size)
 	{
-		memcpy(m_padded_sig+pad_size, sig, nsamples * 4);
+		memcpy(padded_sig_+pad_size, sig, nsamples * 4);
 
 		// Pad left
 		const int pad_cnt = pad_size + 1;
 		for (int i = 1; i < pad_cnt; ++i) {
-			m_padded_sig[pad_size - i] = sig[i];
+			padded_sig_[pad_size - i] = sig[i];
 		}
 
 		// Pad right.
 		const int offset = nsamples - pad_size - 1;
 		const int padded_nsamples = nsamples + pad_size + pad_size;
 		for (int i = 0; i < pad_size; ++i) {
-			m_padded_sig[padded_nsamples - 1 - i] = sig[i + offset];
+			padded_sig_[padded_nsamples - 1 - i] = sig[i + offset];
 		}
 
-		return m_padded_sig;
+		return padded_sig_;
 	}
 
 	void fourier_transform(const float* sig, int nsamples, const float* window, float* out)
@@ -417,19 +426,23 @@ private:
 			float sum_real = 0.0f;
 			float sum_imag = 0.0f;
 			for (int t = 0; t < nsamples; ++t) {
-				sum_real += window[t] * sig[t] * m_cos_cache[f * m_nfft + t];
-				sum_imag += window[t] * sig[t] * -1.0 * m_sin_cache[f * m_nfft + t];
+				sum_real += window[t] * sig[t] * cos_cache_[f * n_fft_ + t];
+				sum_imag += window[t] * sig[t] * -1.0 * sin_cache_[f * n_fft_ + t];
 			}
 			out[f] = sum_real * sum_real + sum_imag * sum_imag;
 		}
 	}
 
 private:
-	float* m_stft_out;
-	float* m_cos_cache;
-	float* m_sin_cache;
-	float* m_padded_sig;
-	float* m_mel_filters;
-	float* m_mel_spec_f32;
-	Float16* m_mel_spec_f16;
+	const int n_fft_ = 400;
+	const int hop_length_ = 160;
+	const int n_mels_ = 80;
+	const int n_freqs_ = n_fft_ / 2 + 1;
+	float* stft_out_;
+	float* cos_cache_;
+	float* sin_cache_;
+	float* padded_sig_;
+	float* mel_filters_;
+	float* mel_spec_f32_;
+	Float16* mel_spec_f16_;
 };

@@ -120,8 +120,8 @@ int main(int argc, char const *argv[])
     const int audio_block_size  = audio_capture_time * samplerate;
     const int audio_block_capture_size = audio_capture_time * samplerate;
     AudioStream stream;
-    AudioPreprocessor apreproc(10);
-    VoiceActivityDetector vad(audio_block_size, speech_threshold);
+    AudioPreprocessor apreproc;
+    VoiceActivityDetector vad(speech_threshold);
 
     printf("Speak now (ctrl+c to quit)\n");
 
@@ -145,7 +145,7 @@ int main(int argc, char const *argv[])
             if (stream.m_signal.size() >= block_ctr*audio_block_size + audio_block_size) {
                 const float* signal_data = stream.m_signal.data() + block_ctr*audio_block_size;
 
-                const bool has_speech = vad.signal_has_speech(signal_data);
+                const bool has_speech = vad.signal_has_speech(signal_data, audio_block_size);
                 if (has_speech) {
                     printf("[SPEECH]: ADD FRAME\n");
                     memcpy(audio_sig + n_sig, signal_data, audio_block_size*sizeof(float));
@@ -173,9 +173,9 @@ int main(int argc, char const *argv[])
         stream.stop_recording();
 
         if (first_speech) {
-            // TODO: Correct this.
-            const Float16* spectrogram = apreproc.get_mel_spectrogram(audio_sig, 10*16000);
-            const int n_spec_frames = apreproc.m_out_frames;
+            int n_spec_frames;
+            const int n_sig_samples = block_ctr*audio_block_size;
+            const Float16* spectrogram = apreproc.get_mel_spectrogram(audio_sig, n_sig_samples, &n_spec_frames);
             Float16* xa = encoder_forward(spectrogram, n_spec_frames, whisper.enc, whisper.config);
             
             std::string prompt = whisper_decode(whisper, xa, n_spec_frames, true);
