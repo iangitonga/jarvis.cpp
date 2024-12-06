@@ -101,7 +101,6 @@ int main(int argc, char const *argv[])
     llm::SmolLM2Type llm_model_type = llm::SmolLM2Type::Medium;
 
     int record_duration_secs = 10;
-
     bool testrun_no_audio_inp = false;
 
     for (int i = 1; i < argc; i++) {

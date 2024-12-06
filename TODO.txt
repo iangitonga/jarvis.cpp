@@ -1,6 +1,4 @@
 NEXT:
-- Add automatic voice detection activity (VAD).
-  - Perform refactorings, improve VAD
 - Add tts-model.
 
 FUTURE:
@@ -11,11 +9,8 @@ Optimization:
     - Add NEON Optimization
 
 New features:
-    - Submit prompt? Allow for prompt inspection before passing to llm.
-    - Add output coloring.
     - Add GPU support?
     - Add translation(Multilingual models)
-    - new vs malloc
-
-New project
-- SmolVit
+    - SmolVit
+    - Submit prompt? Allow for prompt inspection before passing to llm.
+    - Add output coloring.

@@ -214,7 +214,7 @@ int main(int argc, char const *argv[])
     const int audio_block_size  = 3 * samplerate;
     const int audio_block_capture_size = audio_capture_time * samplerate;
     AudioBuffer audio_buffer(buffer_size, audio_block_capture_size, audio_block_size, /*overlap_frames=*/1000);
-    AudioPreprocessor apreproc{audio_block_size/samplerate};
+    AudioPreprocessor apreproc;
 
     std::thread capture_thread(capture, &audio_buffer);
     capture_thread.detach();
@@ -224,8 +224,8 @@ int main(int argc, char const *argv[])
     // TODO: Catch ctrl+c.
     while (true) {
         const float* signal_data = audio_buffer.get_next_audio_block();
-        const Float16* spectrogram = apreproc.get_mel_spectrogram(signal_data, audio_block_size);
-        const int n_spec_frames = apreproc.m_out_frames;
+        int n_spec_frames;
+        const Float16* spectrogram = apreproc.get_mel_spectrogram(signal_data, audio_block_size, &n_spec_frames);
         Float16* xa = encoder_forward(spectrogram, n_spec_frames, whisper.enc, whisper.config);
         
         whisper_decode_stream(whisper, xa, n_spec_frames);

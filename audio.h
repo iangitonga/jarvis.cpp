@@ -10,14 +10,6 @@
 #include "common.h"
 
 
-/*
-audio.h [const k = 0]
-audio.cpp [global::k]
-jarvis.cpp [global::k]
-maximum audio block/chunk lenth in seconds
-during linking [error: multiple definitions of symbol k]
-*/
-
 inline constexpr int kSampleRate = 16000;
 // Maximum length (in secs) of an audio chunk.
 inline constexpr int kMaxChunkLength = 30; // in secs

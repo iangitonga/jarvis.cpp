@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <memory>
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -10,13 +11,6 @@
 #include "audio.h"
 #include "stt.h"
 
-/*
-TODO:
-    - Catch ctrl+C event and perform shutdown.
-    - Add a form of VAD so that silent speech is not forwarded to the model. We could also
-      use the model's no_speech recognition as second option.
-    - Add translation models to perform live-translation.
-*/
 
 void audio_callback_capture(ma_device* device, void* output, const void* input, ma_uint32 frame_count)
 {
@@ -80,14 +74,51 @@ public:
 };
 
 
+static const char *usage_message = R"(
+USAGE:
+./vadtest [options]
+
+Optional args. 
+--stt MODEL_SIZE:  The Speech-to-Text model to use. MODEL_SIZE options are (tiny, base, small)[default=base].
+--speech_threshold T: The vad speech threshold. Energy above threshold is speech and less is silence.
+)";
 
 int main(int argc, char const *argv[])
 {
+    stt::WhisperType stt_model_type = stt::WhisperType::Tiny;
+    const char* stt_model_name = "acft-whisper-tiny.en.bin";
     float speech_threshold = -90.0f;
 
     for (int i = 1; i < argc; i++) {
         const std::string_view arg{argv[i]};
-        if (arg == "--speech_threshold") {
+        if (arg == "--stt") {
+            if (i + 1 < argc) {
+                const std::string_view stt_arg{argv[i + 1]};
+                if (stt_arg == "tiny") {
+                    stt_model_name = "acft-whisper-tiny.en.bin";
+                    stt_model_type = stt::WhisperType::Tiny;
+                }
+                else if (stt_arg == "base") {
+                    stt_model_name = "acft-whisper-base.en.bin";
+                    stt_model_type = stt::WhisperType::Base;
+                }
+                else if (stt_arg == "small") {
+                    stt_model_name = "acft-whisper-small.en.bin";
+                    stt_model_type = stt::WhisperType::Small;
+                }
+                else {
+                    printf("error: invalid stt option: %s.\n", stt_arg.data());
+                    printf("%s\n", usage_message);
+                    return -1;
+                }
+                i += 1; // fast-forward
+            } else {
+                printf("error: stt option is not provided.\n");
+                printf("%s\n", usage_message);
+                return -1;
+            }
+        }
+        else if (arg == "--speech_threshold") {
             if (argc <= i+1) {
                 fprintf(stderr, "speech_threshold value is missing.\n");
                 return -1;
@@ -108,25 +139,19 @@ int main(int argc, char const *argv[])
         }
     }
 
-    stt::WhisperType stt_model_type = stt::WhisperType::Tiny;
-    const char* stt_model_name = "acft-whisper-tiny.en.bin";
-    int audio_capture_time = 2;
-
     stt::Whisper whisper;
     stt::whisper_init(whisper, stt_model_type, get_model_path(stt_model_name));
 
-    const int samplerate = 16000;
-    const int buffer_size = 30 * samplerate;
-    const int audio_block_size  = audio_capture_time * samplerate;
-    const int audio_block_capture_size = audio_capture_time * samplerate;
+    int audio_capture_time = 2;
+    const int audio_block_size  = audio_capture_time * kSampleRate;
+
     AudioStream stream;
     AudioPreprocessor apreproc;
     VoiceActivityDetector vad(speech_threshold);
 
-    printf("Speak now (ctrl+c to quit)\n");
-
-    float* audio_sig = new float[10*16000];
+    std::unique_ptr<float> audio_sig(new float[10*kSampleRate]);
     int n_sig = 0;
+
     std::string cmd_input;
     while (true) {
         printf("Press enter to begin recording (enter q to quit) ...");
@@ -141,20 +166,20 @@ int main(int argc, char const *argv[])
         int block_ctr = 0;
         bool first_speech = false;
         bool prev_is_silent = false;
-        while (stream.m_signal.size() < 30*16000) {
+        while (stream.m_signal.size() < 30*kSampleRate) {
             if (stream.m_signal.size() >= block_ctr*audio_block_size + audio_block_size) {
                 const float* signal_data = stream.m_signal.data() + block_ctr*audio_block_size;
 
                 const bool has_speech = vad.signal_has_speech(signal_data, audio_block_size);
                 if (has_speech) {
                     printf("[SPEECH]: ADD FRAME\n");
-                    memcpy(audio_sig + n_sig, signal_data, audio_block_size*sizeof(float));
+                    memcpy(audio_sig.get() + n_sig, signal_data, audio_block_size*sizeof(float));
                     n_sig += audio_block_size;
                     first_speech = true;
                     prev_is_silent = false;
                 } else if (!has_speech && first_speech && !prev_is_silent) {
                     printf("[NO_SPEECH]: ADD FRAME\n");
-                    memcpy(audio_sig + n_sig, signal_data, audio_block_size*sizeof(float));
+                    memcpy(audio_sig.get() + n_sig, signal_data, audio_block_size*sizeof(float));
                     n_sig += audio_block_size;
                     prev_is_silent = true;
                 }
@@ -175,7 +200,7 @@ int main(int argc, char const *argv[])
         if (first_speech) {
             int n_spec_frames;
             const int n_sig_samples = block_ctr*audio_block_size;
-            const Float16* spectrogram = apreproc.get_mel_spectrogram(audio_sig, n_sig_samples, &n_spec_frames);
+            const Float16* spectrogram = apreproc.get_mel_spectrogram(audio_sig.get(), n_sig_samples, &n_spec_frames);
             Float16* xa = encoder_forward(spectrogram, n_spec_frames, whisper.enc, whisper.config);
             
             std::string prompt = whisper_decode(whisper, xa, n_spec_frames, true);
